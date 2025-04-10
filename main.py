@@ -496,7 +496,7 @@ if st.button("📤 Export to Google Sheets"):
                 all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
 
         sheet = connect_to_gsheet(SHEET_ID)
-        today_str = datetime.today().strftime("%B %d")
+        today_str = datetime.today().strftime("%B %d %I:%M%p")
         worksheet = create_unique_worksheet(sheet, today_str)
         export_df_to_sheet(all_data, worksheet)
         st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
