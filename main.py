@@ -192,9 +192,13 @@ def decimal_to_hhmmss_nosign(decimal_hours):
 
 
 
+import json
+from google.oauth2.service_account import Credentials
+
 def connect_to_gsheet(sheet_id):
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_file("gcp_credentials.json", scopes=scopes)
+    creds_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     sheet = client.open_by_key(sheet_id)
     return sheet
