@@ -4,6 +4,12 @@ import streamlit as st
 from datetime import datetime
 from data_processor import load_and_process_data
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
+
+SHEET_ID = "1fgd07CflSVeQ5SSlmHKt8-i-tXmz89ILn-uQaPeYVto"
+
+
 
 
 # Dropdown label → column name
@@ -183,6 +189,34 @@ def decimal_to_hhmmss_nosign(decimal_hours):
     seconds = total_seconds % 60
 
     return f"{hours:02}:{minutes:02}:{seconds:02}"
+
+
+
+def connect_to_gsheet(sheet_id):
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_file("gcp_credentials.json", scopes=scopes)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(sheet_id)
+    return sheet
+
+def create_unique_worksheet(sheet, base_name):
+    existing_titles = [ws.title for ws in sheet.worksheets()]
+    name = base_name
+    counter = 1
+
+    while name in existing_titles:
+        name = f"{base_name} ({counter})"
+        counter += 1
+
+    worksheet = sheet.add_worksheet(title=name, rows="1000", cols="30")
+    return worksheet
+
+def export_df_to_sheet(df, worksheet):
+    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+
+
+
+
 
 
 
@@ -400,9 +434,67 @@ if st.session_state.raw_data:
 
     ########################------------------------ ENDS GROUP BY OFFICE
 
+def create_unique_worksheet(sheet, title):
+    try:
+        template = sheet.worksheet("Template")
+        new_worksheet = template.duplicate(new_sheet_name=title)
+
+        # ✅ Unhide the worksheet via batch_update
+        sheet.batch_update({
+            "requests": [{
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": new_worksheet.id,
+                        "hidden": False
+                    },
+                    "fields": "hidden"
+                }
+            }]
+        })
+
+        return new_worksheet
+    except Exception:
+        return sheet.add_worksheet(title=title, rows=1000, cols=26)
+
+
+
+def convert_time_columns_for_export(df):
+    time_cols = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
+    for col in time_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(decimal_to_hhmmss)  # this uses your existing time formatter
+    return df
+
+def decimal_to_hhmmss_string(decimal_hours):
+    try:
+        is_negative = decimal_hours < 0
+        total_seconds = int(abs(decimal_hours) * 3600)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        formatted = f"{hours:02}:{minutes:02}:{seconds:02}"
+        return f"-{formatted}" if is_negative else formatted
+    except:
+        return ""
 
 
 
 
+if st.button("📤 Export to Google Sheets"):
+    try:
+        all_data = pd.concat(grouped_data.values(), ignore_index=True)
+        all_data = all_data.fillna("")  # Fix for NaNs
 
+        # Convert decimals to hh:mm:ss strings for key columns
+        time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
+        for col in time_columns:
+            if col in all_data.columns:
+                all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
 
+        sheet = connect_to_gsheet(SHEET_ID)
+        today_str = datetime.today().strftime("%B %d")
+        worksheet = create_unique_worksheet(sheet, today_str)
+        export_df_to_sheet(all_data, worksheet)
+        st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
+    except Exception as e:
+        st.error(f"❌ Export failed: {e}")
