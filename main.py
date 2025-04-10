@@ -6,6 +6,7 @@ from data_processor import load_and_process_data
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+import pytz
 
 SHEET_ID = "1fgd07CflSVeQ5SSlmHKt8-i-tXmz89ILn-uQaPeYVto"
 
@@ -496,7 +497,8 @@ if st.button("📤 Export to Google Sheets"):
                 all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
 
         sheet = connect_to_gsheet(SHEET_ID)
-        today_str = datetime.today().strftime("%B %d %I:%M%p")
+        local_tz = pytz.timezone("America/Mexico_City")
+        today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
         worksheet = create_unique_worksheet(sheet, today_str)
         export_df_to_sheet(all_data, worksheet)
         st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
