@@ -484,23 +484,25 @@ def decimal_to_hhmmss_string(decimal_hours):
 
 
 
-
 if st.button("📤 Export to Google Sheets"):
     try:
-        all_data = pd.concat(grouped_data.values(), ignore_index=True)
-        all_data = all_data.fillna("")  # Fix for NaNs
+        if not st.session_state.raw_data:
+            st.error("❌ No data loaded. Please upload and load today's CSVs first.")
+        else:
+            all_data = pd.concat(st.session_state.raw_data.values(), ignore_index=True)
+            all_data = all_data.fillna("")  # Fix for NaNs
 
-        # Convert decimals to hh:mm:ss strings for key columns
-        time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
-        for col in time_columns:
-            if col in all_data.columns:
-                all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
+            # Convert decimals to hh:mm:ss strings for key columns
+            time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
+            for col in time_columns:
+                if col in all_data.columns:
+                    all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
 
-        sheet = connect_to_gsheet(SHEET_ID)
-        local_tz = pytz.timezone("America/Mexico_City")
-        today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
-        worksheet = create_unique_worksheet(sheet, today_str)
-        export_df_to_sheet(all_data, worksheet)
-        st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
+            sheet = connect_to_gsheet(SHEET_ID)
+            local_tz = pytz.timezone("America/Mexico_City")
+            today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
+            worksheet = create_unique_worksheet(sheet, today_str)
+            export_df_to_sheet(all_data, worksheet)
+            st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
     except Exception as e:
         st.error(f"❌ Export failed: {e}")
