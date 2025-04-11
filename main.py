@@ -504,6 +504,11 @@ if st.button("📤 Export to Google Sheets"):
                 if col in all_data.columns:
                     all_data[col] = all_data[col].apply(decimal_to_hhmmss_string)
 
+            # Drop debug/internal columns from export
+            columns_to_drop = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
+            all_data = all_data.drop(columns=[col for col in columns_to_drop if col in all_data.columns])
+
+
             sheet = connect_to_gsheet(SHEET_ID)
             local_tz = pytz.timezone("America/Mexico_City")
             today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
