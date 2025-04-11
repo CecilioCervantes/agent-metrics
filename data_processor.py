@@ -10,12 +10,12 @@ from math import floor
 
 
 #helper function that retunrns metrics depending on the week day
-def get_daily_time_goals():
+def get_daily_time_goals(report_date):
     """
     Returns daily requirements based on the day of the week.
     All times returned in decimal hours.
     """
-    weekday = datetime.today().weekday()  # Monday = 0 ... Sunday = 6
+    weekday = report_date.weekday()
 
     if weekday in [0, 1, 2, 3]:  # Mon–Thu
         return 9.5, 2.333, 1.0
@@ -139,7 +139,7 @@ def detect_inconsistencies(df):
 
 
 
-def load_and_process_data(uploaded_dfs):
+def load_and_process_data(uploaded_dfs, report_date):
     """
     Loads all CSV files, renames and reorders columns, and returns them grouped by filename.
     """
@@ -169,7 +169,8 @@ def load_and_process_data(uploaded_dfs):
             df = detect_inconsistencies(df)
 
             # ✅ Then: Calculate Time To Goal — now mismatch info is available
-            goal_time, break_limit, wrap_limit = get_daily_time_goals()
+            goal_time, break_limit, wrap_limit = get_daily_time_goals(report_date)
+
 
             def calculate_time_to_goal(row):
                 tc = row.get("Time Connected", 0)

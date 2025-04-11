@@ -8,9 +8,20 @@ import gspread
 from google.oauth2.service_account import Credentials
 import pytz
 
+
+# Set page config (title and layout)
+st.set_page_config(
+    page_title="Agent Metrics Viewer",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+
 SHEET_ID = "1fgd07CflSVeQ5SSlmHKt8-i-tXmz89ILn-uQaPeYVto"
 
 
+default_date = datetime.today()
+report_date = st.sidebar.date_input("📅 Report Date", default_date)
 
 
 # Dropdown label → column name
@@ -236,13 +247,6 @@ if "uploaded_files" not in st.session_state:
 
 
 
-# Set page config (title and layout)
-st.set_page_config(
-    page_title="Agent Metrics Viewer",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 
 
 # --- SIDEBAR (Left Panel) ---
@@ -292,7 +296,8 @@ with st.sidebar:
     update = st.button("🚀 Load Today's Data", use_container_width=True)
     if update and st.session_state.uploaded_files:
         dfs = [pd.read_csv(f) for f in st.session_state.uploaded_files]
-        st.session_state.raw_data = load_and_process_data(dfs)
+        st.session_state.raw_data = load_and_process_data(dfs, report_date=report_date)
+
 
         # Reset uploader so user can upload fresh files again
         st.session_state.uploaded_files = None
@@ -339,9 +344,10 @@ with st.sidebar:
 
 # --- MAIN SECTION ---
 
-# Show today's date at the top
-today = datetime.today().strftime("%A, %B %d, %Y")
-st.caption(f"🕒 Current Metrics: {today}")
+# Show the selected report date at the top
+selected_date_str = report_date.strftime("%A, %B %d, %Y")
+st.caption(f"🕒 Report Metrics: {selected_date_str}")
+
 
 
 # Title and subtitle
