@@ -34,7 +34,7 @@ import dropbox
 from supabase import create_client, Client
 
 # === PDF EXPORT ===
-import pdfkit
+#import pdfkit
 
 # === SENDGRID EMAIL EXPORT ===
 from sendgrid import SendGridAPIClient
@@ -70,7 +70,7 @@ st.set_page_config(
 
 # === PDFKIT CONFIGURATION ===
 # Required for pdfkit to convert HTML → PDF using wkhtmltopdf
-PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
+#PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
 
 
 # === STREAMLIT SESSION STATE INITIALIZATION ===
@@ -559,50 +559,93 @@ with tab2:
     st.markdown("🎯 **Goal:** Maximize Time Connected & Talk Time ✅ Keep Breaks & Wrap-Up within limits 🚦")
 
     # === BUTTON: PDF Export + Email ===
-    if st.button("📧 Send Summary PDF to My Email"):
-        st.info("📦 Building report... please wait ⏳")
+    # if st.button("📧 Send Summary PDF to My Email"):
+    #     st.info("📦 Building report... please wait ⏳")
 
-        # Rebuild the full dataset
+    #     # Rebuild the full dataset
+    #     df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
+    #     report_date = pd.to_datetime(df["Report Date"].iloc[0])
+    #     date_str = report_date.strftime("%B %d, %Y")
+    #     target_email = "cecilio@marketingleads.com.mx"
+
+    #     with tempfile.TemporaryDirectory() as tmpdir:
+    #         st.session_state["export_mode"] = True  # Suppress UI render
+
+    #         # Build PNG charts in advance (avoids bugs in some backends)
+    #         for _, row in df.iterrows():
+    #             fig = build_export_figure(row)
+    #             img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
+    #             pio.write_image(fig, img_path, format='png', scale=2)
+
+    #         # Sort agents inside each office and group by Office name
+    #         grouped_by_office = {
+    #             office: office_df.sort_values("Agent")
+    #             for office, office_df in df.groupby("Office")
+    #         }
+
+    #         # Create final PDF path
+    #         pdf_path = os.path.join(tmpdir, f"summary_{date_str}.pdf")
+
+    #         # Export the HTML + PDF
+    #         export_html_pdf(grouped_by_office, pdf_path, PDFKIT_CONFIG, chart_folder=tmpdir)
+
+    #         # Email it
+    #         success, msg = send_email(
+    #             to_email=target_email,
+    #             subject=f"Agent Summary Report – {date_str}",
+    #             body="Attached is the full summary.",
+    #             attachment_path=pdf_path
+    #         )
+
+    #         st.session_state["export_mode"] = False  # Restore render mode
+
+    #         if success:
+    #             st.success(f"✅ Sent to {target_email}")
+    #         else:
+    #             st.error(f"❌ {msg}")
+
+
+#### ------------------------------------------------------------------------------------------------------------------------------------------
+    
+    # === BUTTON: Download PDF Instead of Email ===
+    if st.button("📥 Download Summary PDF"):
+        st.info("📦 Generating PDF for download... please wait ⏳")
+
         df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
         report_date = pd.to_datetime(df["Report Date"].iloc[0])
         date_str = report_date.strftime("%B %d, %Y")
-        target_email = "cecilio@marketingleads.com.mx"
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            st.session_state["export_mode"] = True  # Suppress UI render
+            st.session_state["export_mode"] = True
 
-            # Build PNG charts in advance (avoids bugs in some backends)
+            # Generate charts
             for _, row in df.iterrows():
                 fig = build_export_figure(row)
                 img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
                 pio.write_image(fig, img_path, format='png', scale=2)
 
-            # Sort agents inside each office and group by Office name
             grouped_by_office = {
                 office: office_df.sort_values("Agent")
                 for office, office_df in df.groupby("Office")
             }
 
-            # Create final PDF path
-            pdf_path = os.path.join(tmpdir, f"summary_{date_str}.pdf")
+            pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
 
-            # Export the HTML + PDF
-            export_html_pdf(grouped_by_office, pdf_path, PDFKIT_CONFIG, chart_folder=tmpdir)
+            export_html_pdf(grouped_by_office, pdf_path, chart_folder=tmpdir)
 
-            # Email it
-            success, msg = send_email(
-                to_email=target_email,
-                subject=f"Agent Summary Report – {date_str}",
-                body="Attached is the full summary.",
-                attachment_path=pdf_path
-            )
+            st.session_state["export_mode"] = False
 
-            st.session_state["export_mode"] = False  # Restore render mode
+            # Serve the PDF to download
+            with open(pdf_path, "rb") as f:
+                st.download_button(
+                    label="📄 Click to Download PDF",
+                    data=f,
+                    file_name=f"Agent_Report_{date_str}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
-            if success:
-                st.success(f"✅ Sent to {target_email}")
-            else:
-                st.error(f"❌ {msg}")
+
 
 
     # === Data Preparation ===
@@ -651,127 +694,116 @@ with tab2:
 
 
 
-
+#DISABLED EXPORT BUTTONS UNTIL I FIX FUNCTIONALITY 
 
 # === EXPORT TO GOOGLE SHEETS BUTTON ===
-if st.button("📤 Export to Google Sheets"):
-    try:
-        raw_data = st.session_state.get("raw_data")
+# if st.button("📤 Export to Google Sheets"):
+#     try:
+#         raw_data = st.session_state.get("raw_data")
 
-        if raw_data is None or raw_data.empty:
-            st.error("❌ No data loaded. Please upload and load today's CSVs first.")
-            st.stop()
+#         if raw_data is None or raw_data.empty:
+#             st.error("❌ No data loaded. Please upload and load today's CSVs first.")
+#             st.stop()
 
-        # Clone data for export
-        export_df = raw_data.copy().fillna("")
+#         # Clone data for export
+#         export_df = raw_data.copy().fillna("")
 
-        # Convert key time columns to readable format
-        time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
-        for col in time_columns:
-            if col in export_df.columns:
-                export_df[col] = export_df[col].apply(decimal_to_hhmmss_string)
+#         # Convert key time columns to readable format
+#         time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
+#         for col in time_columns:
+#             if col in export_df.columns:
+#                 export_df[col] = export_df[col].apply(decimal_to_hhmmss_string)
 
-        # Drop internal/debug columns
-        debug_cols = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
-        export_df = export_df.drop(columns=[col for col in debug_cols if col in export_df.columns])
+#         # Drop internal/debug columns
+#         debug_cols = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
+#         export_df = export_df.drop(columns=[col for col in debug_cols if col in export_df.columns])
 
-        # Connect to target sheet
-        sheet = connect_to_gsheet(SHEET_ID)
+#         # Connect to target sheet
+#         sheet = connect_to_gsheet(SHEET_ID)
 
-        # Create timestamped worksheet name (e.g. "May 13 03:15PM")
-        local_tz = pytz.timezone("America/Mexico_City")
-        today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
+#         # Create timestamped worksheet name (e.g. "May 13 03:15PM")
+#         local_tz = pytz.timezone("America/Mexico_City")
+#         today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
 
-        # Create new worksheet from template or fallback
-        worksheet = create_unique_worksheet(sheet, today_str)
+#         # Create new worksheet from template or fallback
+#         worksheet = create_unique_worksheet(sheet, today_str)
 
-        # Write data
-        export_df_to_sheet(export_df, worksheet)
+#         # Write data
+#         export_df_to_sheet(export_df, worksheet)
 
-        st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
+#         st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
 
-    except Exception as e:
-        st.error(f"❌ Export failed: {e}")
-
-
-
-
-
-
-# === EXPORT TO SUPABASE ===
-if st.button("📥 Save to Supabase"):
-    try:
-        raw_data = st.session_state.get("raw_data")
-
-        if raw_data is None or raw_data.empty:
-            st.error("❌ No data loaded. Please upload and load today's CSVs first.")
-            st.stop()
-
-        # Select and rename columns for Supabase schema
-        export_columns = [
-            "Report Date", "Agent", "Office", "Server",
-            "1st Call", "Sales", "Time To Goal", "Time Connected",
-            "Break", "Talk Time", "Wrap Up", "Shift End", "Time Mismatch"
-        ]
-        export_df = raw_data[export_columns].rename(columns={
-            "Report Date": "report_date",
-            "Agent": "agent_name",
-            "Office": "office",
-            "Server": "server",
-            "1st Call": "first_call",
-            "Sales": "sales",
-            "Time To Goal": "time_to_goal",
-            "Time Connected": "time_connected",
-            "Break": "break_time",
-            "Talk Time": "talk_time",
-            "Wrap Up": "wrap_up_time",
-            "Shift End": "shift_end",
-            "Time Mismatch": "time_mismatch"
-        })
-
-        # Fill NaNs for safe JSON serialization
-        export_df = export_df.fillna("")
-
-        # Convert time columns to readable strings
-        time_cols = ["time_to_goal", "time_connected", "break_time", "talk_time", "wrap_up_time"]
-        for col in time_cols:
-            if col in export_df.columns:
-                export_df[col] = export_df[col].apply(decimal_to_hhmmss_string)
-
-        # Force all other columns to string (except 'sales')
-        for col in export_df.columns:
-            if col != "sales":
-                export_df[col] = export_df[col].astype(str)
-
-        # Optional: warn if anything slipped through
-        if export_df.isnull().any().any():
-            st.warning("⚠️ There are still nulls after cleaning. Please review.")
-
-        # Convert to records (JSON-friendly list of dicts)
-        records = export_df.to_dict(orient="records")
-
-        # Push to Supabase with upsert (merge if exists)
-        response = supabase.table("agent_metrics").upsert(records).execute()
-
-        # Check response payload
-        if response and hasattr(response, "data") and response.data:
-            st.success("✅ Data successfully saved/updated to Supabase!")
-            st.json(response.data)  # Optional: show inserted rows
-        else:
-            st.warning("⚠️ Supabase responded, but no data was returned.")
-
-    except Exception as e:
-        st.error(f"❌ Failed to insert/update Supabase: {e}")
-        st.exception(e)
+#     except Exception as e:
+#         st.error(f"❌ Export failed: {e}")
 
 
 
 
 
 
+# # === EXPORT TO SUPABASE ===
+# if st.button("📥 Save to Supabase"):
+#     try:
+#         raw_data = st.session_state.get("raw_data")
 
+#         if raw_data is None or raw_data.empty:
+#             st.error("❌ No data loaded. Please upload and load today's CSVs first.")
+#             st.stop()
 
+#         # Select and rename columns for Supabase schema
+#         export_columns = [
+#             "Report Date", "Agent", "Office", "Server",
+#             "1st Call", "Sales", "Time To Goal", "Time Connected",
+#             "Break", "Talk Time", "Wrap Up", "Shift End", "Time Mismatch"
+#         ]
+#         export_df = raw_data[export_columns].rename(columns={
+#             "Report Date": "report_date",
+#             "Agent": "agent_name",
+#             "Office": "office",
+#             "Server": "server",
+#             "1st Call": "first_call",
+#             "Sales": "sales",
+#             "Time To Goal": "time_to_goal",
+#             "Time Connected": "time_connected",
+#             "Break": "break_time",
+#             "Talk Time": "talk_time",
+#             "Wrap Up": "wrap_up_time",
+#             "Shift End": "shift_end",
+#             "Time Mismatch": "time_mismatch"
+#         })
 
+#         # Fill NaNs for safe JSON serialization
+#         export_df = export_df.fillna("")
 
+#         # Convert time columns to readable strings
+#         time_cols = ["time_to_goal", "time_connected", "break_time", "talk_time", "wrap_up_time"]
+#         for col in time_cols:
+#             if col in export_df.columns:
+#                 export_df[col] = export_df[col].apply(decimal_to_hhmmss_string)
 
+#         # Force all other columns to string (except 'sales')
+#         for col in export_df.columns:
+#             if col != "sales":
+#                 export_df[col] = export_df[col].astype(str)
+
+#         # Optional: warn if anything slipped through
+#         if export_df.isnull().any().any():
+#             st.warning("⚠️ There are still nulls after cleaning. Please review.")
+
+#         # Convert to records (JSON-friendly list of dicts)
+#         records = export_df.to_dict(orient="records")
+
+#         # Push to Supabase with upsert (merge if exists)
+#         response = supabase.table("agent_metrics").upsert(records).execute()
+
+#         # Check response payload
+#         if response and hasattr(response, "data") and response.data:
+#             st.success("✅ Data successfully saved/updated to Supabase!")
+#             st.json(response.data)  # Optional: show inserted rows
+#         else:
+#             st.warning("⚠️ Supabase responded, but no data was returned.")
+
+#     except Exception as e:
+#         st.error(f"❌ Failed to insert/update Supabase: {e}")
+#         st.exception(e)
 

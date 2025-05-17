@@ -9,12 +9,13 @@ import dropbox
 import plotly.graph_objects as go
 import tempfile
 import plotly.io as pio
-import pdfkit
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (
-    Mail, Attachment, FileContent, FileName, FileType, Disposition
-)
+#import pdfkit
+#from mailersend import emails
 import base64
+from dotenv import load_dotenv
+from xhtml2pdf import pisa
+
+
 
 
 
@@ -554,7 +555,7 @@ def detect_inconsistencies(df):
                 return f"{h:02}:{m:02}:{s:02}"
 
             # 🚨 Flag if difference > 10 min
-            if diff > 0.167:
+            if diff > 0:
                 visible = f"⚠️ +{format_diff_to_hms(diff)}"
                 mismatch_amount = diff
             else:
@@ -638,6 +639,19 @@ def load_and_process_data(uploaded_dfs, report_date):
 
             extra_break = max(0, br - break_limit)
             extra_wrap = max(0, wr - wrap_limit)
+
+            available_break = max(0, break_limit - br)
+            available_wrap = max(0, wrap_limit - wr)
+
+            # Apply cross-compensation: only once each
+            wrap_offset = min(extra_wrap, available_break)
+            break_offset = min(extra_break, available_wrap)
+
+            extra_wrap -= wrap_offset
+            extra_break -= break_offset
+
+
+
             total_penalty = extra_break + extra_wrap
             mismatch_penalty = row.get("_MismatchAmount", 0)
 
@@ -697,7 +711,8 @@ def load_and_process_data(uploaded_dfs, report_date):
 
 def send_email(to_email, subject, body, attachment_path=None, from_email=None):
     """
-    Sends an email with optional PDF attachment using the SendGrid API.
+    Sends an email with optional PDF attachment using Brevo SMTP.
+
 
     Relies on SENDGRID_API_KEY stored in environment variables.
 
@@ -712,51 +727,53 @@ def send_email(to_email, subject, body, attachment_path=None, from_email=None):
         Tuple[bool, str]: Success flag and message string
     """
     try:
-        # 🔐 Load API key securely
-        api_key = os.getenv("SENDGRID_API_KEY")
-        if not api_key:
-            return False, "❌ Missing SENDGRID_API_KEY in environment variables."
+        # Load .env and get the API key
+        load_dotenv()
+        smtp_server = os.getenv("BREVO_SMTP_SERVER", "smtp-relay.brevo.com")
+        smtp_port = int(os.getenv("BREVO_SMTP_PORT", 587))
+        smtp_user = os.getenv("BREVO_SMTP_USER")
+        smtp_pass = os.getenv("BREVO_SMTP_PASS")
 
+        if not smtp_user or not smtp_pass:
+            return False, "❌ Missing Brevo SMTP credentials in environment variables."
         from_email = from_email or "cecilio@marketingleads.com.mx"
-        sg = SendGridAPIClient(api_key=api_key)
 
-        # ✉️ Create the message
-        message = Mail(
-            from_email=from_email,
-            to_emails=to_email,
-            subject=subject,
-            plain_text_content=body
-        )
+        
 
-        # 📎 Attach PDF if provided
+
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.application import MIMEApplication
+
+        msg = MIMEMultipart()
+        msg["From"] = from_email
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
         if attachment_path:
             with open(attachment_path, "rb") as f:
-                data = f.read()
-                encoded_file = base64.b64encode(data).decode()
+                part = MIMEApplication(f.read(), _subtype="pdf")
+                part.add_header("Content-Disposition", "attachment", filename=os.path.basename(attachment_path))
+                msg.attach(part)
 
-            attachment = Attachment(
-                FileContent(encoded_file),
-                FileName(os.path.basename(attachment_path)),
-                FileType("application/pdf"),
-                Disposition("attachment")
-            )
-            message.attachment = attachment
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_email, to_email, msg.as_string())
 
-        # 📤 Send it
-        response = sg.send(message)
+        return True, f"✅ Email sent to {to_email}"
 
-        # ✅ Check SendGrid response
-        if 200 <= response.status_code < 300:
-            return True, f"✅ Email sent to {to_email}"
-        else:
-            return False, f"❌ Failed to send. Status code: {response.status_code}, body: {response.body}"
+
 
     except Exception as e:
         return False, f"❌ Error: {e}"
 
 
 
-def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
+
+def export_html_pdf(grouped_data, output_path, chart_folder):
     from collections import Counter
 
     html_blocks = []
@@ -770,24 +787,33 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
     wrap_limit = decimal_to_hhmmss_nosign(wrap_limit)
     talk_goal = decimal_to_hhmmss_nosign(talk_goal)
 
+
+
     goal_paragraph = f"""
-    <p style="margin-bottom: 4px;">
+    <p style="margin-bottom: 8px;">
         Today’s goal is to ensure all agents complete their Logged In Time, avoid exceeding Break or Wrap-Up time, and reach the minimum Talk Time.
-        More time on the phones means more opportunities to sell.
+        More time on the phones means more opportunities to sell.<br /><br />
+        <strong>• Time Connected:</strong> {goal_time}<br />
+        <strong>• Break Limit:</strong> {break_limit}<br />
+        <strong>• Wrap-Up Limit:</strong> {wrap_limit}<br />
+        <strong>• Talk Time Goal:</strong> {talk_goal}
     </p>
-    <ul>
-        <li><strong>Time Connected:</strong> {goal_time}</li>
-        <li><strong>Break Limit:</strong> {break_limit}</li>
-        <li><strong>Wrap-Up Limit:</strong> {wrap_limit}</li>
-        <li><strong>Talk Time Goal:</strong> {talk_goal}</li>
-    </ul>
-    <hr style="border: none; border-top: 2px solid black; margin: 20px 0;" />
+    <hr style="border: none; border-top: 2px solid #000; margin: 16px 0;" />
+"""
 
-    """
+#############---------------------------------------
 
-    html_blocks.append(f"<h1>Daily Agent Report</h1>{goal_paragraph}")
 
-    for office, office_df in grouped_data.items():
+    html_blocks.append(f"""
+        <h1 style="color: #007acc; font-size: 30px; margin-bottom: 12px;">Daily Agent Report</h1>
+        {goal_paragraph}
+    """)
+
+
+
+
+
+    for office_index, (office, office_df) in enumerate(grouped_data.items()):
         total = len(office_df)
         status_counts = Counter()
 
@@ -811,26 +837,30 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
         just_pct = round((status_counts["just_made_it"] / total) * 100)
         late_pct = round((status_counts["late"] / total) * 100)
 
-        html_blocks.append(f"""
-            <h2 style="font-size: 26px; color: #007acc; margin-bottom: 4px;">
-                {office} — {total} agents connected
-            </h2>
-            <p style="font-size: 26px; color: green; margin: 2px 0;">On Time: {on_pct}%</p>
-            <p style="font-size: 26px; color: #FFA500; margin: 2px 0;">Just Made It: {just_pct}%</p>
-            <p style="font-size: 26px; color: red; margin: 2px 0;">Late: {late_pct}%</p>
-            <hr style="border: none; border-top: 2px dashed black; margin: 20px 0;" />
 
+
+        break_style = "page-break-before: always;" if office_index > 0 else ""
+
+        html_blocks.append(f"""
+            <div style="{break_style}">
+                <p style="font-size: 16px; line-height: 1.5; font-weight: bold;">
+                    {office} — {total} agents connected<br />
+                    <span style="color: green; font-weight: normal;">On Time: {on_pct}%</span><br />
+                    <span style="color: #FFA500; font-weight: normal;">Just Made It: {just_pct}%</span><br />
+                    <span style="color: red; font-weight: normal;">Late: {late_pct}%</span>
+                </p>
+                <hr style="border: none; border-top: 1px dashed #aaa; margin: 14px 0;" />
+            </div>
         """)
 
 
+
         for _, row in office_df.iterrows():
-            # Line with name, status, sales, ttg
             ttg_val = row.get("Time To Goal", None)
             ttg_str = decimal_to_hhmmss(ttg_val) if pd.notna(ttg_val) else "--:--:--"
             sales = row.get("Sales", 0)
             agent = row["Agent"]
 
-            # Clock-in summary
             try:
                 call_dt = pd.to_datetime(row["1st Call"] + f" {report_date.year}")
                 _, _, _, _, shift_start = get_daily_time_goals(report_date)
@@ -848,30 +878,26 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
             except:
                 status = "<span style='color:gray;'>Unknown</span>"
 
-            text = f"""
-                <p style="margin: 8px 0 6px 0; font-size: 26px;">
-                    <strong style="color:#007acc;">{agent}</strong><br />
-                    {status}<br />
-                    <strong>Sales:</strong> {sales}<br />
-                    <strong>Time To Goal:</strong> {ttg_str}
-                </p>
-            """
-
             chart_filename = f"{agent.replace(' ', '_')}.png"
             chart_path = os.path.join(chart_folder, chart_filename)
 
-            # ✅ Wrap entire block to avoid page break inside agent report
             html_blocks.append(f"""
-                <div style="page-break-inside: avoid;">
-                    {text}
-                    <div class="agent-chart" style="width: 100%; margin-bottom: 40px;">
-                        <img src="{chart_path}" style="width: 100%; border-radius: 6px;" />
-                    </div>
-                </div>
-            """)
+            <table style="page-break-inside: avoid; width: 100%; margin-bottom: 20px;">
+                <tr>
+                    <td style="font-size: 15px; line-height: 1.5;">
+                        <strong style="font-size: 16px; color: #000;">{agent}</strong><br />
+                        {status}<br />
+                        <strong>Sales:</strong> {sales}<br />
+                        <strong>Time To Goal:</strong> {ttg_str}<br /><br />
+                        <img src="{chart_path}" style="width: 100%; margin-top: 0px;" /><br />
+                        <div style="border-top: 1px solid #ddd; margin: 12px 0;"></div>
+                    </td>
+                </tr>
+            </table>
+        """)
 
 
-    # Final render
+
     full_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -879,7 +905,7 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
     <style>
         body {{
             font-family: Helvetica, Arial, sans-serif;
-            font-size: 26px;
+            font-size: 15px;
             color: #111;
             background-color: #fff;
             margin: 0;
@@ -887,16 +913,22 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
         }}
         h1 {{
             color: #007acc;
-            font-size: 26px;
+            font-size: 22px;
             margin-bottom: 10px;
         }}
         h2 {{
-            color: #007acc;
-            font-size: 26px;
-            margin-bottom: 6px;
+            font-size: 18px;
+            color: #333;
+            margin: 14px 0 6px 0;
         }}
         p, li {{
-            font-size: 26px;
+            font-size: 15px;
+            line-height: 1.4;
+            margin: 4px 0;
+        }}
+        ul {{
+            padding-left: 20px;
+            margin-bottom: 10px;
         }}
     </style>
 </head>
@@ -905,9 +937,8 @@ def export_html_pdf(grouped_data, output_path, pdfkit_config, chart_folder):
 </body>
 </html>"""
 
-
-    options = {'enable-local-file-access': None}
-    pdfkit.from_string(full_html, output_path, configuration=pdfkit_config, options=options)
+    with open(output_path, "wb") as f:
+        pisa.CreatePDF(src=full_html, dest=f)
 
 
 
