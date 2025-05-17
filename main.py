@@ -37,10 +37,10 @@ from supabase import create_client, Client
 #import pdfkit
 
 # === SENDGRID EMAIL EXPORT ===
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import (
-    Mail, Attachment, FileContent, FileName, FileType, Disposition
-)
+#from sendgrid import SendGridAPIClient
+#from sendgrid.helpers.mail import (
+#    Mail, Attachment, FileContent, FileName, FileType, Disposition
+#)
 
 # === LOCAL MODULES ===
 from data_processor import (
