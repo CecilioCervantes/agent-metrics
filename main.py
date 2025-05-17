@@ -182,7 +182,9 @@ with log_expander:
 
 
 
-
+# Report Date: Used to calculate correct daily goals
+default_date = datetime.today()
+report_date = st.sidebar.date_input("📅 Report Date", default_date)
 
 
 # Visual separator
@@ -240,9 +242,7 @@ else:
 
 
 
-# Report Date: Used to calculate correct daily goals
-default_date = datetime.today()
-report_date = st.sidebar.date_input("📅 Report Date", default_date)
+
 
 
 
