@@ -9,3 +9,4 @@ reportlab
 kaleido
 python-dotenv
 xhtml2pdf
+Pillow

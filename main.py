@@ -70,6 +70,26 @@ st.set_page_config(
 )
 
 
+from PIL import Image
+
+def get_base64_image(image_path):
+    with open(image_path, "rb") as img_file:
+        encoded = base64.b64encode(img_file.read()).decode()
+        return f"data:image/png;base64,{encoded}"
+
+# Show logo at top
+logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+if os.path.exists(logo_path):
+    logo_base64 = get_base64_image(logo_path)
+    st.markdown(f"""
+        <div style='text-align: left; padding-top: 10px; padding-bottom: 10px;'>
+            <img src="{logo_base64}" style="max-width: 240px; width: 100%; height: auto;">
+        </div>
+    """, unsafe_allow_html=True)
+
+
+
+
 # === PDFKIT CONFIGURATION ===
 # Required for pdfkit to convert HTML → PDF using wkhtmltopdf
 #PDFKIT_CONFIG = pdfkit.configuration(wkhtmltopdf="/usr/local/bin/wkhtmltopdf")
