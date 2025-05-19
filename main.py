@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import tempfile
+import zipfile
+
 
 
 # === STREAMLIT INTERFACE ===
@@ -64,7 +66,7 @@ from data_processor import (
 st.set_page_config(
     page_title="Metrics Viewer",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 
@@ -77,12 +79,19 @@ st.set_page_config(
 # Ensures expected keys are present in session_state with default values
 
 for key, default in {
-    "raw_data": None,           # Processed agent data (full DataFrame)
-    "uploaded_files": None      # List of uploaded CSVs from manual input
+    "raw_data": None,
+    "uploaded_files": None,
+    "pdf_paths": {},  # ← store generated PDFs here
+    "pdf_ready": False,  # NEW: control when to auto-generate
+    "pdf_ready_next_cycle": False  # NEW: one-cycle delay buffer
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
+
+if st.session_state.get("pdf_ready_next_cycle"):
+    st.session_state["pdf_ready"] = True
+    st.session_state["pdf_ready_next_cycle"] = False
 
 
 # === CONFIGURATION: EXTERNAL SERVICES ===
@@ -223,7 +232,12 @@ if files:
         processed_data = load_and_process_data(file_data_pairs, report_date=report_date)
 
         st.session_state.raw_data = processed_data
+        st.session_state["pdf_paths"] = {}
+        st.session_state["pdf_ready_next_cycle"] = True
         st.session_state.dropbox_file_names = [name for name, _ in files]
+        st.session_state["pdf_paths"] = {}  # Clear old PDFs
+        
+
 
         with log_expander:
             st.success(f"📂 Loaded files: {st.session_state.dropbox_file_names}")
@@ -279,6 +293,9 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+    
+    
+    
     # --- File Uploader ---
     uploaded_files = st.file_uploader(
         "Drop your CSVs below 👇",
@@ -288,15 +305,6 @@ with st.sidebar:
     )
 
 
-
-
-
-
-
-
-
-    # === Save uploaded files to session states #$$$$$$$$$$$$$$$$$$$$$$$$$///////////// ----------------
-    #
     if uploaded_files:
         st.session_state.uploaded_files = uploaded_files
         st.success("✅ Files uploaded successfully. Now click 'Load Today's Data'.")
@@ -313,9 +321,16 @@ with st.sidebar:
             # Process & store results
             st.session_state.raw_data = load_and_process_data(
                 file_data_pairs, report_date=report_date
+            
             )
+            st.session_state["pdf_paths"] = {}  # Clear old PDFs
+
 
             st.success("✅ Data processed successfully!")
+            st.session_state["pdf_paths"] = {}
+            st.session_state["pdf_ready_next_cycle"] = True
+
+
 
         except Exception as e:
             st.error(f"❌ Failed to process uploaded files: {e}")
@@ -458,8 +473,8 @@ def render_agent_block(row, unique_key_suffix=None):
     **Sales:** {row.get('Sales', 0)}  
     🗒️ **Daily Goals:**  
     - ⏱️ Time Connected: {format_time(goals['Time Connected'])}  
-    - 🛑 Break Limit: {format_time(goals['Break'])}  
     - 📝 Wrap-Up Limit: {format_time(goals['Wrap Up'])}  
+    - 🛑 Break Limit: {format_time(goals['Break'])}  
     - 🎙️ Talk Time Goal: {format_time(goals['Talk Time'])}
     """
 
@@ -492,7 +507,7 @@ selected_date_str = report_date.strftime("%A, %B %d, %Y")
 st.markdown(f"🕒 **Report Metrics: {selected_date_str}**")
 
 # === Tabs ===
-tab1, tab2 = st.tabs(["📊 Daily Metrics Overview", "📈 Agent Progress Dashboard"])
+tab2, tab1 = st.tabs(["📈 Agent Progress Dashboard", "📊 Daily Metrics Overview"])
 
 
 ############################
@@ -552,11 +567,106 @@ with tab1:
 
 
 
-############################
+###########################
 # TAB 2: Agent Progress Dashboard
 ############################
 with tab2:
     st.markdown("🎯 **Goal:** Maximize Time Connected & Talk Time ✅ Keep Breaks & Wrap-Up within limits 🚦")
+    
+    # === BUTTON: Download PDF Instead of Email ===
+    if st.button("📥 Download Summary PDF"):
+        st.info("📦 Generating PDFs... please wait ⏳")
+
+
+        OUTPUT_DIR = "exported_pdfs"
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+        df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
+        report_date = pd.to_datetime(df["Report Date"].iloc[0])
+        date_str = report_date.strftime("%B %d, %Y")
+
+        # Reset PDF cache in session
+        st.session_state["pdf_paths"] = {}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            st.session_state["export_mode"] = True
+
+            # Generate chart images for all agents
+            for _, row in df.iterrows():
+                fig = build_export_figure(row)
+                img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
+                pio.write_image(fig, img_path, format='png', scale=2)
+
+            # Group data by office
+            grouped_by_office = {
+                office: office_df.sort_values("Agent")
+                for office, office_df in df.groupby("Office")
+            }
+
+            # === Export full report ===
+            full_pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
+            export_html_pdf(grouped_by_office, full_pdf_path, chart_folder=tmpdir)
+            final_full_path = os.path.join(OUTPUT_DIR, f"Agent_Report_{date_str}.pdf")
+            shutil.copyfile(full_pdf_path, final_full_path)
+            st.session_state["pdf_paths"]["full"] = final_full_path
+
+
+            # === Export each office separately ===
+            for office, office_df in grouped_by_office.items():
+                if office_df.empty:
+                    continue
+
+                
+
+                with tempfile.TemporaryDirectory() as office_tmpdir:
+                    for _, row in office_df.iterrows():
+                        fig = build_export_figure(row)
+                        img_path = os.path.join(office_tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
+                        pio.write_image(fig, img_path, format='png', scale=2)
+
+                    office_pdf_path = os.path.join(office_tmpdir, f"{office}_Report_{date_str}.pdf")
+                    export_html_pdf({office: office_df}, office_pdf_path, chart_folder=office_tmpdir)
+
+                    # Copy to persistent folder to avoid being deleted
+                    final_office_path = os.path.join(OUTPUT_DIR, f"{office}_Report_{date_str}.pdf")
+                    shutil.copyfile(office_pdf_path, final_office_path)
+                    st.session_state["pdf_paths"][office] = final_office_path
+
+
+            # ✅ === Bundle all office PDFs into a single ZIP ===
+            zip_path = os.path.join(OUTPUT_DIR, f"Office_Reports_{date_str}.zip")
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                for office, path in st.session_state["pdf_paths"].items():
+                    if office == "full":
+                        continue
+                    zipf.write(path, arcname=os.path.basename(path))
+            st.session_state["pdf_paths"]["offices_zip"] = zip_path  
+            st.session_state["export_mode"] = False
+
+        # === Download Buttons ===
+        with open(st.session_state["pdf_paths"]["full"], "rb") as f:
+            st.download_button(
+                label="📄 All Office Report",
+                data=f.read(),
+                file_name=os.path.basename(st.session_state["pdf_paths"]["full"]),
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+
+    if "offices_zip" in st.session_state["pdf_paths"]:
+        with open(st.session_state["pdf_paths"]["offices_zip"], "rb") as f:
+            st.download_button(
+                label="📦 Download individual office reports",
+                data=f.read(),
+                file_name=os.path.basename(st.session_state["pdf_paths"]["offices_zip"]),
+                mime="application/zip",
+                use_container_width=True
+            )
+
+
+
+
 
     # === BUTTON: PDF Export + Email ===
     # if st.button("📧 Send Summary PDF to My Email"):
@@ -564,7 +674,7 @@ with tab2:
 
     #     # Rebuild the full dataset
     #     df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
-    #     report_date = pd.to_datetime(df["Report Date"].iloc[0])
+    #     report_date = pd.to_datet#ime(df["Report Date"].iloc[0])
     #     date_str = report_date.strftime("%B %d, %Y")
     #     target_email = "cecilio@marketingleads.com.mx"
 
@@ -606,49 +716,11 @@ with tab2:
 
 
 #### ------------------------------------------------------------------------------------------------------------------------------------------
-    
-    # === BUTTON: Download PDF Instead of Email ===
-    if st.button("📥 Download Summary PDF"):
-        st.info("📦 Generating PDF for download... please wait ⏳")
-
-        df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
-        report_date = pd.to_datetime(df["Report Date"].iloc[0])
-        date_str = report_date.strftime("%B %d, %Y")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            st.session_state["export_mode"] = True
-
-            # Generate charts
-            for _, row in df.iterrows():
-                fig = build_export_figure(row)
-                img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
-                pio.write_image(fig, img_path, format='png', scale=2)
-
-            grouped_by_office = {
-                office: office_df.sort_values("Agent")
-                for office, office_df in df.groupby("Office")
-            }
-
-            pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
-
-            export_html_pdf(grouped_by_office, pdf_path, chart_folder=tmpdir)
-
-            st.session_state["export_mode"] = False
-
-            # Serve the PDF to download
-            with open(pdf_path, "rb") as f:
-                st.download_button(
-                    label="📄 Click to Download PDF",
-                    data=f,
-                    file_name=f"Agent_Report_{date_str}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
 
 
 
 
-    # === Data Preparation ===
+# === Data Preparation ===
     raw_data = st.session_state.get("raw_data", None)
     if raw_data is None:
         st.warning("⚠️ No data loaded yet. Please upload a CSV or load from Dropbox.")
@@ -684,6 +756,46 @@ with tab2:
                     agent_name = agent_row.get("Agent", "Unknown")
                     st.error(f"❌ Failed to render agent {agent_name}: {e}")
                 st.markdown("---")
+
+
+
+
+
+# === Always show download buttons if PDFs exist ===
+if (
+    "pdf_paths" in st.session_state and 
+    "full" in st.session_state["pdf_paths"] and 
+    os.path.exists(st.session_state["pdf_paths"]["full"])
+):
+    # Full PDF
+    with open(st.session_state["pdf_paths"]["full"], "rb") as f:
+        st.download_button(
+            label="📄 Click to Download Full PDF",
+            data=f.read(),
+            file_name=os.path.basename(st.session_state["pdf_paths"]["full"]),
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+    # Per-Office PDFs
+    st.markdown("### 📥 Download PDF per Office")
+    for office in sorted(k for k in st.session_state["pdf_paths"].keys() if k != "full"):
+        path = st.session_state["pdf_paths"][office]
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                st.download_button(
+                    label=f"📄 Download {office} PDF",
+                    data=f.read(),
+                    file_name=os.path.basename(path),
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+
+
+
+
+    
 
 
 
