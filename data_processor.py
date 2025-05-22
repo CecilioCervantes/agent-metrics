@@ -14,6 +14,12 @@ import plotly.io as pio
 import base64
 from dotenv import load_dotenv
 from xhtml2pdf import pisa
+import json
+import streamlit as st
+from google.oauth2.service_account import Credentials
+import gspread
+
+
 
 
 
@@ -183,24 +189,16 @@ def convert_time_columns_for_export(df):
 ### === EXPORT: GOOGLE SHEETS ===
 
 def connect_to_gsheet(sheet_id):
-    """
-    Connects to a Google Spreadsheet using service account credentials stored in st.secrets.
-
-    Parameters:
-        sheet_id (str): The unique ID of the Google Sheet
-
-    Returns:
-        gspread.Spreadsheet: Authorized Google Sheet object
-    """
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 
-    # Load credentials from Streamlit secrets
-    creds_dict = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    # Handle both TOML (local) and cloud-parsed secrets
+    raw_creds = st.secrets["GCP_SERVICE_ACCOUNT"]
+    creds_dict = json.loads(raw_creds) if isinstance(raw_creds, str) else raw_creds
 
-    # Authorize with gspread and return sheet handle
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open_by_key(sheet_id)
+
 
 
 

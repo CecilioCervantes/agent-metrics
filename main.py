@@ -57,7 +57,10 @@ from data_processor import (
     export_html_pdf,
     send_email,
     decimal_to_hhmmss,
-    build_export_figure
+    build_export_figure,
+    connect_to_gsheet,
+    create_unique_worksheet,
+    export_df_to_sheet
 )
 
 
@@ -536,6 +539,53 @@ tab2, tab1 = st.tabs(["📈 Agent Progress Dashboard", "📊 Daily Metrics Overv
 with tab1:
     st.markdown("### 📊 **All Office Metrics**")
 
+
+    # === EXPORT TO GOOGLE SHEETS BUTTON ===
+    if st.button("📤 Export to Google Sheets"):
+        try:
+            raw_data = st.session_state.get("raw_data")
+
+            if raw_data is None:
+                st.error("❌ No data loaded. Please upload and load today's CSVs first.")
+                st.stop()
+
+            # Flatten if needed
+            df = pd.concat(raw_data.values(), ignore_index=True) if isinstance(raw_data, dict) else raw_data.copy()
+
+            if df.empty:
+                st.error("⚠️ No data found to export.")
+                st.stop()
+
+            export_df = df.copy()
+
+            # Clean time columns: replace empty strings with NaN
+            time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
+            for col in time_columns:
+                if col in export_df.columns:
+                    export_df[col] = pd.to_numeric(export_df[col], errors="coerce")
+                    export_df[col] = export_df[col].apply(lambda x: decimal_to_hhmmss(x) if pd.notna(x) else "")
+
+            # Drop internal/debug columns
+            debug_cols = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
+            export_df = export_df.drop(columns=[col for col in debug_cols if col in export_df.columns])
+
+            # Connect to sheet
+            sheet = connect_to_gsheet(SHEET_ID)
+            local_tz = pytz.timezone("America/Mexico_City")
+            today_str = datetime.today().strftime("%B %d — %I:%M%p").lstrip("0").replace(" 0", " ")
+            worksheet = create_unique_worksheet(sheet, today_str)
+
+            # Export
+            export_df_to_sheet(export_df, worksheet)
+            st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
+
+        except Exception as e:
+            st.error(f"❌ Export failed: {e}")
+
+
+
+
+
     # Load processed data from session state
     raw_data = st.session_state.get("raw_data", None)
 
@@ -826,47 +876,9 @@ if (
 
 
 
-#DISABLED EXPORT BUTTONS UNTIL I FIX FUNCTIONALITY 
 
-# === EXPORT TO GOOGLE SHEETS BUTTON ===
-# if st.button("📤 Export to Google Sheets"):
-#     try:
-#         raw_data = st.session_state.get("raw_data")
 
-#         if raw_data is None or raw_data.empty:
-#             st.error("❌ No data loaded. Please upload and load today's CSVs first.")
-#             st.stop()
 
-#         # Clone data for export
-#         export_df = raw_data.copy().fillna("")
-
-#         # Convert key time columns to readable format
-#         time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
-#         for col in time_columns:
-#             if col in export_df.columns:
-#                 export_df[col] = export_df[col].apply(decimal_to_hhmmss_string)
-
-#         # Drop internal/debug columns
-#         debug_cols = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
-#         export_df = export_df.drop(columns=[col for col in debug_cols if col in export_df.columns])
-
-#         # Connect to target sheet
-#         sheet = connect_to_gsheet(SHEET_ID)
-
-#         # Create timestamped worksheet name (e.g. "May 13 03:15PM")
-#         local_tz = pytz.timezone("America/Mexico_City")
-#         today_str = datetime.now(local_tz).strftime("%B %d %I:%M%p")
-
-#         # Create new worksheet from template or fallback
-#         worksheet = create_unique_worksheet(sheet, today_str)
-
-#         # Write data
-#         export_df_to_sheet(export_df, worksheet)
-
-#         st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
-
-#     except Exception as e:
-#         st.error(f"❌ Export failed: {e}")
 
 
 
