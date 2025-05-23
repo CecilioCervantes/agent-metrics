@@ -508,7 +508,7 @@ def render_agent_block(row, unique_key_suffix=None):
             with cols[0]:
                 st.markdown(text_block, unsafe_allow_html=True)
             with cols[1]:
-                chart_key = f"{row['Office']}_{row['Agent']}_chart"
+                chart_key = f"{row['Office']}_{row['Agent']}_{row.name}_chart"
                 if unique_key_suffix:
                     chart_key += f"_{unique_key_suffix}"
                 st.plotly_chart(fig, use_container_width=True, key=chart_key)
@@ -666,12 +666,12 @@ with tab2:
             # Generate chart images for all agents
             for _, row in df.iterrows():
                 fig = build_export_figure(row)
-                img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
+                img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
                 pio.write_image(fig, img_path, format='png', scale=2)
 
-            # Group data by office
+            # Group data by office and sort agents by name + time connected
             grouped_by_office = {
-                office: office_df.sort_values("Agent")
+                office: office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
                 for office, office_df in df.groupby("Office")
             }
 
@@ -693,7 +693,7 @@ with tab2:
                 with tempfile.TemporaryDirectory() as office_tmpdir:
                     for _, row in office_df.iterrows():
                         fig = build_export_figure(row)
-                        img_path = os.path.join(office_tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
+                        img_path = os.path.join(office_tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
                         pio.write_image(fig, img_path, format='png', scale=2)
 
                     office_pdf_path = os.path.join(office_tmpdir, f"{office}_Report_{date_str}.pdf")
@@ -810,7 +810,11 @@ with tab2:
     # === UI Rendering: One block per office ===
     if not st.session_state.get("export_mode"):
         for office in sorted(offices):
-            office_df = df[df["Office"] == office]
+            office_df = df[df["Office"] == office].copy()
+
+            # Sort by Agent name + Time Connected descending to group duplicates logically
+            office_df = office_df.sort_values(by=["Agent", "Time Connected"], ascending=[True, False])
+
 
             if office_df.empty:
                 st.warning(f"⚠️ Skipping {office} — no agents found.")
