@@ -855,9 +855,13 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
         for _, row in office_df.iterrows():
             ttg_val = row.get("Time To Goal", None)
-            ttg_str = decimal_to_hhmmss(ttg_val) if pd.notna(ttg_val) else "--:--:--"
-            sales = row.get("Sales", 0)
-            agent = row["Agent"]
+            if pd.notna(ttg_val):
+                ttg_str = decimal_to_hhmmss(ttg_val)
+                ttg_color = "green" if ttg_val >= 0 else "red"
+                ttg_str = f"<span style='color:{ttg_color}'>{ttg_str}</span>"
+            else:
+                ttg_str = "--:--:--"
+
 
             try:
                 call_dt = pd.to_datetime(row["1st Call"] + f" {report_date.year}")
