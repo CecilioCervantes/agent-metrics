@@ -880,6 +880,7 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
             except:
                 status = "<span style='color:gray;'>Unknown</span>"
 
+            agent = row["Agent"]
             chart_filename = f"{agent.replace(' ', '_')}_{row.name}.png"
             chart_path = os.path.abspath(os.path.join(chart_folder, chart_filename))
 
