@@ -484,6 +484,8 @@ def render_agent_block(row, unique_key_suffix=None):
     ttg_raw = row.get("Time To Goal", None)
     if pd.notna(ttg_raw):
         ttg_str = decimal_to_hhmmss(ttg_raw)
+        ttg_color = "green" if ttg_raw >= 0 else "red"
+        ttg_str = f"<span style='color:{ttg_color}'>{ttg_str}</span>"
     else:
         ttg_str = "--:--:--"
     ttg_line = f"⏳ <strong>Time To Goal:</strong> {ttg_str}"
