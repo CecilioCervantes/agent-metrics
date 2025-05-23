@@ -876,8 +876,8 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
             except:
                 status = "<span style='color:gray;'>Unknown</span>"
 
-            chart_filename = f"{agent.replace(' ', '_')}.png"
-            chart_path = os.path.join(chart_folder, chart_filename)
+            chart_filename = f"{agent.replace(' ', '_')}_{row.name}.png"
+            chart_path = os.path.abspath(os.path.join(chart_folder, chart_filename))
 
             html_blocks.append(f"""
             <table style="page-break-inside: avoid; width: 100%; margin-bottom: 20px;">
