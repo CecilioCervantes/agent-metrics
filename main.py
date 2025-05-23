@@ -557,6 +557,8 @@ with tab1:
                 st.stop()
 
             export_df = df.copy()
+            export_df = export_df.sort_values(by=["Office", "Agent", "Time Connected"])
+
 
             # Clean time columns: replace empty strings with NaN
             time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
