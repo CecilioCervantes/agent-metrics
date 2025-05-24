@@ -668,7 +668,7 @@ def load_and_process_data(uploaded_dfs, report_date):
                 if agent_name.startswith("sp ") or agent_name.startswith("pr "): return "Sp & Prime"
                 if agent_name.startswith("e "): return "Egypt"
                 if agent_name.startswith("s "): return "Spanish"
-                if agent_name.startswith("g "): return "Nigeria"
+                if agent_name.startswith("g "): return "Pakistan"
             return "Other"
 
         df["Office"] = df["Agent"].apply(classify_office)
