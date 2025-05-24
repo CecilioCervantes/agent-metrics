@@ -420,7 +420,7 @@ def get_daily_time_goals(report_date):
     elif weekday == 4:  # Friday
         return 7.5, 2.0, 0.75, 3.5, "06:45"
     elif weekday == 5:  # Saturday
-        return 6.0, 1.5, 0.75, 2.75, "07:15"
+        return 4.5, 1.5, 0.75, 2.75, "07:15"
     elif weekday == 6:  # Sunday
         return 5.0, 1.0, 0.75, None, "07:15"
 
@@ -691,6 +691,7 @@ def load_and_process_data(uploaded_dfs, report_date):
         df.index = range(1, len(df) + 1)
 
         # Store under server name
+        
         combined_data[f"Server {server_number}"] = df
         server_number += 1
 
@@ -812,10 +813,21 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
 
     for office_index, (office, office_df) in enumerate(grouped_data.items()):
-        total = len(office_df)
-        status_counts = Counter()
 
-        for _, row in office_df.iterrows():
+        # ✅ Use only first login per agent for punctuality stats
+        stats_df = (
+            office_df.sort_values(by=["Agent", "1st Call"])
+            .drop_duplicates(subset="Agent", keep="first")
+        )
+
+
+        stats_df = office_df.attrs.get("unique_summary_rows", office_df)
+
+        total = len(stats_df)
+        status_counts = Counter()
+        for _, row in stats_df.iterrows():
+
+
             try:
                 call_dt = pd.to_datetime(row["1st Call"] + f" {report_date.year}")
                 _, _, _, _, shift_start = get_daily_time_goals(report_date)

@@ -671,11 +671,21 @@ with tab2:
                 img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
                 pio.write_image(fig, img_path, format='png', scale=2)
 
-            # Group data by office and sort agents by name + time connected
-            grouped_by_office = {
-                office: office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
-                for office, office_df in df.groupby("Office")
-            }
+            # STEP 1: Deduplicate globally by earliest 1st Call for summary stats
+            df_sorted = df.sort_values(by=["Agent", "1st Call"])
+            unique_agents = df_sorted.drop_duplicates(subset="Agent", keep="first")
+
+            # STEP 2: Attach unique summary DF to each office's DataFrame for PDF logic
+            grouped_by_office = {}
+            for office, office_df in df.groupby("Office"):
+                office_agents = office_df["Agent"].unique()
+                office_summary_df = unique_agents[unique_agents["Agent"].isin(office_agents)]
+                office_df_sorted = office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
+                
+                # Hack: Store unique rows for PDF stats using special key
+                office_df_sorted.attrs["unique_summary_rows"] = office_summary_df
+                grouped_by_office[office] = office_df_sorted
+
 
             # === Export full report ===
             full_pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
