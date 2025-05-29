@@ -416,13 +416,13 @@ def get_daily_time_goals(report_date):
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
     if weekday in [0, 1, 2, 3]:  # Mon–Thu
-        return 9.75, 2.333, 1.0, 4.5, "06:45"
+        return 9.75, 2.333, 1.0, 4.5, "07:45"
     elif weekday == 4:  # Friday
-        return 7.5, 2.0, 0.75, 3.5, "06:45"
+        return 7.5, 2.0, 0.75, 3.5, "07:45"
     elif weekday == 5:  # Saturday
-        return 6.0, 1.5, 0.75, 2.75, "07:15"
+        return 6.0, 1.5, 0.75, 2.75, "08:15"
     elif weekday == 6:  # Sunday
-        return 5.0, 1.0, 0.75, None, "08:00"
+        return 5.0, 1.0, 0.75, None, "09:00"
 
 
 
