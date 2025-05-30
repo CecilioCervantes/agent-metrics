@@ -561,13 +561,22 @@ with tab1:
             export_df = df.copy()
             export_df = export_df.sort_values(by=["Office", "Agent", "Time Connected"])
 
+            # ✅ Adjust Time Connected by removing mismatch
+            if "_MismatchAmount" in export_df.columns and "Time Connected" in export_df.columns:
+                export_df["Time Connected"] = (
+                    export_df["Time Connected"] - export_df["_MismatchAmount"]
+                ).clip(lower=0)
+
 
             # Clean time columns: replace empty strings with NaN
-            time_columns = ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]
-            for col in time_columns:
+            for col in ["Time To Goal", "Time Connected", "Break", "Talk Time", "Wrap Up"]:
                 if col in export_df.columns:
                     export_df[col] = pd.to_numeric(export_df[col], errors="coerce")
-                    export_df[col] = export_df[col].apply(lambda x: decimal_to_hhmmss(x) if pd.notna(x) else "")
+                    if col == "Time To Goal":
+                        export_df[col] = export_df[col].apply(lambda x: decimal_to_hhmmss(x) if pd.notna(x) else "")
+                    else:
+                        export_df[col] = export_df[col].apply(lambda x: decimal_to_hhmmss_nosign(x) if pd.notna(x) else "")
+
 
             # Drop internal/debug columns
             debug_cols = ["Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"]
