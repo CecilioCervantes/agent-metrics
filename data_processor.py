@@ -416,13 +416,13 @@ def get_daily_time_goals(report_date):
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
     if weekday in [0, 1, 2, 3]:  # Mon–Thu
-        return 9.75, 2.333, 1.0, 4.5, "07:45"
+        return 9.5, 2.333, 1.0, 4.5, "06:45"
     elif weekday == 4:  # Friday
-        return 7.75, 2.0, 0.75, 3.5, "07:45"
+        return 7.5, 2.0, 0.75, 3.5, "06:45"
     elif weekday == 5:  # Saturday
-        return 6.0, 1.5, 0.75, 2.75, "08:15"
+        return 6, 1.5, 0.75, 2.75, "07:15"
     elif weekday == 6:  # Sunday
-        return 5.0, 1.0, 0.75, None, "09:00"
+        return 5.0, 1.0, 0.75, None, "08:00"
 
 
 
@@ -463,6 +463,90 @@ def get_bar_color(metric, percent):
     except:
         return "#999999"  # Gray fallback on error
 
+def calculate_ttg_value(tc, br, wr, mismatch_amount, report_date):
+    """Calculate Time To Goal for aggregated rows."""
+    goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
+
+    extra_break = max(0, br - break_limit)
+    extra_wrap = max(0, wr - wrap_limit)
+
+    available_break = max(0, break_limit - br)
+    available_wrap = max(0, wrap_limit - wr)
+
+    wrap_offset = min(extra_wrap, available_break)
+    break_offset = min(extra_break, available_wrap)
+
+    extra_wrap -= wrap_offset
+    extra_break -= break_offset
+
+    total_penalty = extra_break + extra_wrap
+
+    ttg = (tc - goal_time - total_penalty) - mismatch_amount
+    adjusted = mismatch_amount > 0
+    return ttg, adjusted
+
+
+def format_mismatch(mismatch_amount):
+    if mismatch_amount > 0:
+        return f"⚠️ +{decimal_to_hhmmss_nosign(mismatch_amount)}"
+    return "✅"
+
+
+def insert_total_rows(df, report_date):
+    """Insert aggregated total rows for agents with duplicates."""
+    result = []
+    numeric_cols = [
+        "Time Connected", "Break", "Talk Time", "Wrap Up", "Sales", "_MismatchAmount"
+    ]
+
+    for agent, group in df.groupby("Agent", sort=False):
+        for _, row in group.iterrows():
+            result.append(row.to_dict())
+
+        if len(group) > 1:
+            total_row = group.iloc[-1].copy()
+
+            for col in numeric_cols:
+                if col in group.columns:
+                    if col == "Sales":
+                        total_row[col] = pd.to_numeric(group[col], errors="coerce").fillna(0).astype(int).sum()
+                    else:
+                        total_row[col] = group[col].sum()
+
+
+            if "1st Call" in group.columns:
+                try:
+                    total_row["1st Call"] = group["1st Call"].min()
+                except Exception:
+                    pass
+            if "Shift End" in group.columns:
+                try:
+                    total_row["Shift End"] = group["Shift End"].max()
+                except Exception:
+                    pass
+
+            mismatch_sum = total_row.get("_MismatchAmount", 0)
+            total_row["Time Mismatch"] = format_mismatch(mismatch_sum)
+
+            ttg, adjusted = calculate_ttg_value(
+                total_row.get("Time Connected", 0),
+                total_row.get("Break", 0),
+                total_row.get("Wrap Up", 0),
+                mismatch_sum,
+                report_date,
+            )
+            total_row["Time To Goal"] = ttg
+            total_row["_TTG_Adjusted"] = adjusted
+            total_row["is_total"] = True
+            total_row["Server"] = "Total"
+
+            result.append(total_row.to_dict())
+
+    new_df = pd.DataFrame(result)
+    new_df.index = range(1, len(new_df) + 1)
+    return new_df
+
+
 
 
 
@@ -489,8 +573,8 @@ COLUMN_RENAME_MAP = {
 
 # 🎯 Column order used for displaying processed data (UI and exports)
 DISPLAY_COLUMN_ORDER = [
-    "1st Call", "Sales", "Agent", "Time To Goal", "Time Connected",
-    "Break", "Talk Time", "Wrap Up", "Shift End",
+    "Sales", "Server", "1st Call", "Shift End", "Agent", "Time To Goal", "Time Connected",
+    "Break", "Talk Time", "Wrap Up", 
     "Time Mismatch", "_MismatchAmount", "_TTG_Adjusted"
 ]
 
@@ -673,16 +757,19 @@ def load_and_process_data(uploaded_dfs, report_date):
 
         df["Office"] = df["Agent"].apply(classify_office)
 
+
+        # ✅ Extract actual server number from the file name
+        match = re.search(r"automation(\d+)", file_name.lower())
+        server_number_str = match.group(1) if match else "?"
+
+        df["Server"] = f"Server {server_number_str}"
+
         # Ensure all display columns exist
         for col in DISPLAY_COLUMN_ORDER:
             if col not in df.columns:
                 df[col] = ""
 
-        # Final column list + metadata
-        columns_to_keep = [col for col in DISPLAY_COLUMN_ORDER if col in df.columns]
-        for meta_col in ["Office", "Report Date"]:
-            if meta_col in df.columns:
-                columns_to_keep.append(meta_col)
+
 
         df = df[columns_to_keep]
 
@@ -692,7 +779,7 @@ def load_and_process_data(uploaded_dfs, report_date):
 
         # Store under server name
         
-        combined_data[f"Server {server_number}"] = df
+        combined_data[f"Server {server_number_str}"] = df
         server_number += 1
 
     return combined_data
@@ -893,15 +980,31 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
                 status = "<span style='color:gray;'>Unknown</span>"
 
             sales = row.get("Sales", 0)    
+            # 🔵 Label logic
             agent = row["Agent"]
+            is_total = row.get("is_total") is True
+            server_label = row.get("Server", "")
+            server_number = ""
+
+            if is_total:
+                agent_label = f"{agent} (Total)"
+            else:
+                if server_label.startswith("Server") and server_label[-1].isdigit():
+                    server_number = server_label[-1]
+                else:
+                    server_number = "?"
+                agent_label = f"{agent} on Server {server_number}"
+
+            # Chart image path
             chart_filename = f"{agent.replace(' ', '_')}_{row.name}.png"
             chart_path = os.path.abspath(os.path.join(chart_folder, chart_filename))
 
+            # Final HTML block
             html_blocks.append(f"""
             <table style="page-break-inside: avoid; width: 100%; margin-bottom: 20px;">
                 <tr>
                     <td style="font-size: 15px; line-height: 1.5;">
-                        <strong style="font-size: 16px; color: #000;">{agent}</strong><br />
+                        <strong style="font-size: 16px; color: #000;">{agent_label}</strong><br />
                         {status}<br />
                         <strong>Sales:</strong> {sales}<br />
                         <strong>Time To Goal:</strong> {ttg_str}<br /><br />
@@ -910,7 +1013,8 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
                     </td>
                 </tr>
             </table>
-        """)
+            """)
+
 
 
 
@@ -1048,7 +1152,7 @@ def build_agent_html_section(row, chart_path):
 
 
 
-def build_export_figure(row):
+def build_export_figure(row, color_override=None):
     # Extract time goals
     report_date = pd.to_datetime(row["Report Date"])
     goal_time, break_limit, wrap_limit, talk_time_goal, shift_start = get_daily_time_goals(report_date)
@@ -1078,7 +1182,7 @@ def build_export_figure(row):
             percent = 0
 
         bar_value = min(percent, 150)
-        bar_color = get_bar_color(metric, percent)
+        bar_color = color_override if color_override else get_bar_color(metric, percent)
         text_display = f"{format_time(value)} / {format_time(goals[metric])}"
 
         # Text logic: inside if >=50%, otherwise outside
@@ -1143,7 +1247,7 @@ def build_export_figure(row):
 
 
 
-def build_progress_figure(row, unique_key_suffix=None):
+def build_progress_figure(row, unique_key_suffix=None, color_override=None):
     """
     Builds a horizontal bar chart showing agent progress vs daily goals.
     Used in both Streamlit UI (via render_agent_block) and during PDF export.
@@ -1180,7 +1284,8 @@ def build_progress_figure(row, unique_key_suffix=None):
             percent = 0
 
         bar_value = min(percent, 150)  # Visually cap bar but reflect overage
-        bar_color = get_bar_color(metric, percent)
+        bar_color = color_override if color_override else get_bar_color(metric, percent)
+
 
         text_display = (
             f"{format_time(value)} / {format_time(goals[metric])}"

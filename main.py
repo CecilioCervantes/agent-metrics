@@ -58,6 +58,7 @@ from data_processor import (
     send_email,
     decimal_to_hhmmss,
     build_export_figure,
+    insert_total_rows,
     connect_to_gsheet,
     create_unique_worksheet,
     export_df_to_sheet
@@ -430,8 +431,11 @@ SORT_DIRECTION = {
 }
 
 def render_agent_block(row, unique_key_suffix=None):
-    # === Build chart and get daily goal values for the given agent ===
-    fig, goals = build_progress_figure(row, unique_key_suffix)
+    if row.get("is_total") is True:
+        fig, goals = build_progress_figure(row, unique_key_suffix, color_override="#1E88E5")
+    else:
+        fig, goals = build_progress_figure(row, unique_key_suffix)
+
     report_date = pd.to_datetime(row["Report Date"])
     goal_time, break_limit, wrap_limit, talk_time_goal, shift_start = get_daily_time_goals(report_date)
 
@@ -491,8 +495,24 @@ def render_agent_block(row, unique_key_suffix=None):
     ttg_line = f"⏳ <strong>Time To Goal:</strong> {ttg_str}"
 
     # === Build the text summary block ===
+    agent = row["Agent"]
+    is_total = row.get("is_total") is True
+    server_label = row.get("Server", "")
+    server_number = ""
+
+    # Determine label
+    if is_total:
+        agent_label = f"{agent} (Total)"
+    else:
+        if server_label.startswith("Server") and server_label[-1].isdigit():
+            server_number = server_label[-1]
+        else:
+            server_number = "?"
+        agent_label = f"{agent} on Server {server_number}"
+
+
     text_block = f"""
-    ## {row['Agent']} {inline_status}  
+    ## {agent_label} {inline_status}
     {ttg_line}
 
     **Sales:** {row.get('Sales', 0)}  
@@ -514,6 +534,10 @@ def render_agent_block(row, unique_key_suffix=None):
                 if unique_key_suffix:
                     chart_key += f"_{unique_key_suffix}"
                 st.plotly_chart(fig, use_container_width=True, key=chart_key)
+
+
+    print("🔍 Keys in row:", list(row.keys()))
+
 
     return fig, text_block
 
@@ -551,15 +575,24 @@ with tab1:
                 st.error("❌ No data loaded. Please upload and load today's CSVs first.")
                 st.stop()
 
-            # Flatten if needed
-            df = pd.concat(raw_data.values(), ignore_index=True) if isinstance(raw_data, dict) else raw_data.copy()
+            # Combine full raw dataset across offices
+            if isinstance(raw_data, dict):
+                df = pd.concat(raw_data.values(), ignore_index=True)
+            else:
+                df = raw_data.copy()
 
-            if df.empty:
+            # Insert total rows for agents with multiple entries
+            rep_date = pd.to_datetime(df["Report Date"].iloc[0])
+            export_df = insert_total_rows(df, rep_date)
+
+
+
+            if export_df.empty:
                 st.error("⚠️ No data found to export.")
                 st.stop()
 
-            export_df = df.copy()
             export_df = export_df.sort_values(by=["Office", "Agent", "Time Connected"])
+
 
             # ✅ Adjust Time Connected by removing mismatch
             if "_MismatchAmount" in export_df.columns and "Time Connected" in export_df.columns:
@@ -589,6 +622,7 @@ with tab1:
             worksheet = create_unique_worksheet(sheet, today_str)
 
             # Export
+            export_df = export_df.fillna("")
             export_df_to_sheet(export_df, worksheet)
             st.success(f"✅ Exported to tab '{worksheet.title}' successfully!")
 
@@ -629,7 +663,12 @@ with tab1:
 
             # Format decimal time columns for display
             try:
+                
+                rep_date = pd.to_datetime(office_df["Report Date"].iloc[0])
+                office_df = insert_total_rows(office_df, rep_date)
+
                 office_df = format_time_columns(office_df)
+
             except Exception as e:
                 st.error(f"❌ Failed to format {office}: {e}")
                 continue
@@ -638,11 +677,18 @@ with tab1:
             office_df.index = range(1, len(office_df) + 1)
 
             # Render each office block inside an expander
-            with st.expander(f"🏢 {office} Office – Showing {len(office_df)} agents"):
+            unique_agents = office_df[office_df["is_total"] != True]["Agent"].nunique() if "is_total" in office_df.columns else office_df["Agent"].nunique()
+
+            with st.expander(f"🏢 {office} Office – Showing {unique_agents} agents"):
+
                 st.caption(f"Currently sorted by: **{sort_criterion}**")
                 
-                # Hide internal debug columns (like _TTG_Adjusted, etc.)
-                visible_columns = [col for col in office_df.columns if not col.startswith("_")]
+
+                visible_columns = [
+                    "Sales", "Server", "1st Call", "Shift End", "Agent", "Time To Goal", 
+                    "Time Connected", "Break", "Talk Time", "Wrap Up", "Time Mismatch"
+                ]
+                visible_columns = [col for col in visible_columns if col in office_df.columns]
                 st.dataframe(office_df[visible_columns], use_container_width=True)
     else:
         st.warning("⚠️ No data loaded or available for display.")
@@ -674,12 +720,6 @@ with tab2:
         with tempfile.TemporaryDirectory() as tmpdir:
             st.session_state["export_mode"] = True
 
-            # Generate chart images for all agents
-            for _, row in df.iterrows():
-                fig = build_export_figure(row)
-                img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
-                pio.write_image(fig, img_path, format='png', scale=2)
-
             # STEP 1: Deduplicate globally by earliest 1st Call for summary stats
             df_sorted = df.sort_values(by=["Agent", "1st Call"])
             unique_agents = df_sorted.drop_duplicates(subset="Agent", keep="first")
@@ -690,10 +730,20 @@ with tab2:
                 office_agents = office_df["Agent"].unique()
                 office_summary_df = unique_agents[unique_agents["Agent"].isin(office_agents)]
                 office_df_sorted = office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
+                office_df_sorted = insert_total_rows(office_df_sorted, report_date)
                 
                 # Hack: Store unique rows for PDF stats using special key
                 office_df_sorted.attrs["unique_summary_rows"] = office_summary_df
                 grouped_by_office[office] = office_df_sorted
+
+            # Generate chart images for all rows (including totals)
+            for office_df in grouped_by_office.values():
+                for _, row in office_df.iterrows():
+                    color = "#666666" if row.get("is_total") is True else None
+
+                    fig = build_export_figure(row, color_override=color)
+                    img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
+                    pio.write_image(fig, img_path, format='png', scale=2)
 
 
             # === Export full report ===
@@ -713,9 +763,14 @@ with tab2:
 
                 with tempfile.TemporaryDirectory() as office_tmpdir:
                     for _, row in office_df.iterrows():
-                        fig = build_export_figure(row)
+                        if row.get("is_total") is True:
+                            fig = build_export_figure(row, color_override="#1E88E5")
+                        else:
+                            fig = build_export_figure(row)
+
                         img_path = os.path.join(office_tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
                         pio.write_image(fig, img_path, format='png', scale=2)
+
 
                     office_pdf_path = os.path.join(office_tmpdir, f"{office}_Report_{date_str}.pdf")
                     export_html_pdf({office: office_df}, office_pdf_path, chart_folder=office_tmpdir)
@@ -835,7 +890,8 @@ with tab2:
 
             # Sort by Agent name + Time Connected descending to group duplicates logically
             office_df = office_df.sort_values(by=["Agent", "Time Connected"], ascending=[True, False])
-
+            rep_date = pd.to_datetime(office_df["Report Date"].iloc[0])
+            office_df = insert_total_rows(office_df, rep_date)
 
             if office_df.empty:
                 st.warning(f"⚠️ Skipping {office} — no agents found.")
@@ -977,4 +1033,3 @@ if (
 #     except Exception as e:
 #         st.error(f"❌ Failed to insert/update Supabase: {e}")
 #         st.exception(e)
-
