@@ -769,7 +769,11 @@ def load_and_process_data(uploaded_dfs, report_date):
             if col not in df.columns:
                 df[col] = ""
 
-
+        # Final column list + metadata
+        columns_to_keep = [col for col in DISPLAY_COLUMN_ORDER if col in df.columns]
+        for meta_col in ["Office", "Report Date", "Server"]:
+            if meta_col in df.columns:
+                columns_to_keep.append(meta_col)
 
         df = df[columns_to_keep]
 
