@@ -536,7 +536,7 @@ def render_agent_block(row, unique_key_suffix=None):
                 st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
-    print("🔍 Keys in row:", list(row.keys()))
+    #("🔍 Keys in row:", list(row.keys()))
 
 
     return fig, text_block
