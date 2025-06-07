@@ -420,7 +420,7 @@ def get_daily_time_goals(report_date):
     elif weekday == 4:  # Friday
         return 7.5, 2.0, 0.75, 3.5, "06:45"
     elif weekday == 5:  # Saturday
-        return 6, 1.5, 0.75, 2.75, "07:15"
+        return 4, 1.5, 0.75, 2.75, "07:15"
     elif weekday == 6:  # Sunday
         return 5.0, 1.0, 0.75, None, "08:00"
 
