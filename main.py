@@ -1,3 +1,28 @@
+import resource
+import sys
+
+if sys.platform == "win32":
+    # Windows: raise the C-runtime max-stdio (default 512) up to 2048
+    try:
+        import ctypes
+        crt = ctypes.CDLL("msvcrt")
+        # you can pick any number up to 2048 here
+        crt._setmaxstdio(2048)
+    except Exception:
+        pass
+else:
+    # macOS / Linux: raise the OS soft-limit up to the hard limit
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except Exception:
+        pass
+
+
+
+
+
+
 # === SYSTEM / CORE PYTHON ===
 import os
 import json
@@ -702,7 +727,7 @@ with tab1:
 with tab2:
     st.markdown("🎯 **Goal:** Maximize Time Connected & Talk Time ✅ Keep Breaks & Wrap-Up within limits 🚦")
     
-    # === BUTTON: Download PDF Instead of Email ===
+    # === BUTTON: Download PDF ===
     if st.button("📥 Download Summary PDF"):
         st.info("📦 Generating PDFs... please wait ⏳")
 
@@ -731,19 +756,34 @@ with tab2:
                 office_summary_df = unique_agents[unique_agents["Agent"].isin(office_agents)]
                 office_df_sorted = office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
                 office_df_sorted = insert_total_rows(office_df_sorted, report_date)
+                grouped_by_office[office] = office_df_sorted 
                 
                 # Hack: Store unique rows for PDF stats using special key
                 office_df_sorted.attrs["unique_summary_rows"] = office_summary_df
                 grouped_by_office[office] = office_df_sorted
 
-            # Generate chart images for all rows (including totals)
+
+            # Initialize progress bar
+            total = sum(len(df) for df in grouped_by_office.values())
+            progress = st.progress(0)
+            status = st.empty()
+            count = 0
+
+            # ─── Generate all charts for the FULL report with progress ───
             for office_df in grouped_by_office.values():
                 for _, row in office_df.iterrows():
-                    color = "#666666" if row.get("is_total") is True else None
+                    count += 1
+                    progress.progress(int(count / total * 100))
+                    status.text(f"Generating charts: {count}/{total}")
 
+                    color = "#666666" if row.get("is_total") is True else None
                     fig = build_export_figure(row, color_override=color)
-                    img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
-                    pio.write_image(fig, img_path, format='png', scale=2)
+                    img_path = os.path.join(
+                        tmpdir,
+                        f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+                    )
+                    pio.write_image(fig, img_path, format="png", scale=0.5)
+
 
 
             # === Export full report ===
@@ -759,26 +799,33 @@ with tab2:
                 if office_df.empty:
                     continue
 
+                 # create a folder of copies for this office
+                office_tmpdir = os.path.join(tmpdir, "per_office", office)
+                os.makedirs(office_tmpdir, exist_ok=True)
                 
+                for _, row in office_df.iterrows():
+                    # filename matches the one you already rendered above
+                    filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+                    src = os.path.join(tmpdir, filename)
+                    dst = os.path.join(office_tmpdir, filename)
+                    shutil.copyfile(src, dst)
 
-                with tempfile.TemporaryDirectory() as office_tmpdir:
-                    for _, row in office_df.iterrows():
-                        if row.get("is_total") is True:
-                            fig = build_export_figure(row, color_override="#1E88E5")
-                        else:
-                            fig = build_export_figure(row)
+                office_pdf_path = os.path.join(
+                    office_tmpdir, f"{office}_Report_{date_str}.pdf"
+                )
+                export_html_pdf(
+                    {office: office_df},
+                    office_pdf_path,
+                    chart_folder=office_tmpdir
+                )
 
-                        img_path = os.path.join(office_tmpdir, f"{row['Agent'].replace(' ', '_')}_{row.name}.png")
-                        pio.write_image(fig, img_path, format='png', scale=2)
+                final_office_path = os.path.join(
+                    OUTPUT_DIR, f"{office}_Report_{date_str}.pdf"
+                )
+                shutil.copyfile(office_pdf_path, final_office_path)
+                st.session_state["pdf_paths"][office] = final_office_path
 
 
-                    office_pdf_path = os.path.join(office_tmpdir, f"{office}_Report_{date_str}.pdf")
-                    export_html_pdf({office: office_df}, office_pdf_path, chart_folder=office_tmpdir)
-
-                    # Copy to persistent folder to avoid being deleted
-                    final_office_path = os.path.join(OUTPUT_DIR, f"{office}_Report_{date_str}.pdf")
-                    shutil.copyfile(office_pdf_path, final_office_path)
-                    st.session_state["pdf_paths"][office] = final_office_path
 
 
             # ✅ === Bundle all office PDFs into a single ZIP ===
@@ -791,18 +838,19 @@ with tab2:
             st.session_state["pdf_paths"]["offices_zip"] = zip_path  
             st.session_state["export_mode"] = False
 
-        # === Download Buttons ===
+    # === Download Buttons ===
+    if st.session_state.get("pdf_paths", {}).get("full"):
         with open(st.session_state["pdf_paths"]["full"], "rb") as f:
             st.download_button(
-                label="📄 All Office Report",
-                data=f.read(),
-                file_name=os.path.basename(st.session_state["pdf_paths"]["full"]),
-                mime="application/pdf",
-                use_container_width=True
-            )
+            label="📄 All Office Report",
+            data=f.read(),
+            file_name=os.path.basename(st.session_state["pdf_paths"]["full"]),
+            mime="application/pdf",
+            use_container_width=True
+        )
 
 
-    if "offices_zip" in st.session_state["pdf_paths"]:
+    if st.session_state.get("pdf_paths", {}).get("offices_zip"):
         with open(st.session_state["pdf_paths"]["offices_zip"], "rb") as f:
             st.download_button(
                 label="📦 Download individual office reports",
