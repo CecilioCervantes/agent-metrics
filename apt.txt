@@ -1,0 +1,3 @@
+chromium
+libnss3
+fonts-noto-cjk
