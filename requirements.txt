@@ -37,7 +37,7 @@ iniconfig==2.1.0
 Jinja2==3.1.6
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
-kaleido==1.0.0
+kaleido==0.1.0
 logistro==1.1.0
 lxml==5.4.0
 MarkupSafe==3.0.2
