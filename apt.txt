@@ -1,3 +1,13 @@
+# try both names for the browser
+chromium
 chromium-browser
+
+# required system libs for headless Chrome
 libnss3
+libatk-bridge2.0-0
+libgtk-3-0
+libxss1
+libasound2
+
+# PDF‐friendly fonts
 fonts-noto-cjk
