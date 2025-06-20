@@ -19,6 +19,7 @@ else:
         pass
 
 
+os.environ["KAL_EXECUTABLE"] = "/usr/bin/chromium-browser"
 
 
 
@@ -49,6 +50,7 @@ import pytz
 # === PLOTTING ===
 import plotly.graph_objects as go
 import plotly.io as pio
+pio.kaleido.scope.default_executable = "/usr/bin/chromium-browser"
 
 # === GOOGLE SHEETS EXPORT ===
 import gspread
