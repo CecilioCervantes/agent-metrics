@@ -19,7 +19,6 @@ else:
         pass
 
 
-os.environ["KAL_EXECUTABLE"] = "/usr/bin/chromium-browser"
 
 
 
@@ -48,9 +47,22 @@ import pandas as pd
 import pytz
 
 # === PLOTTING ===
-import plotly.graph_objects as go
+# 1) On Cloud, point Kaleido at the installed Chromium BEFORE we import pio
+if os.environ.get("STREAMLIT_CLOUD") == "true":
+    os.environ["KAL_EXECUTABLE"] = "/usr/bin/chromium-browser"
+
 import plotly.io as pio
-pio.kaleido.scope.default_executable = "/usr/bin/chromium-browser"
+# Kaleido will automatically use os.environ["KAL_EXECUTABLE"] if set.
+# The next two lines are optional—newer Kaleido supports setting the attribute,
+# older versions will ignore it:
+try:
+    pio.kaleido.scope.default_executable = os.environ["KAL_EXECUTABLE"]
+except Exception:
+    pass
+
+
+# 3) Now import graph_objects for building figures
+import plotly.graph_objects as go
 
 # === GOOGLE SHEETS EXPORT ===
 import gspread
