@@ -324,6 +324,67 @@ def sort_dataframe(df, selected_column, sort_direction_map=None):
 
 
 
+def load_chase_data(df_raw):
+    """
+    Converts Chase-format agent data into your standard ReadyMode-compatible format.
+
+    Parameters:
+        df_raw (pd.DataFrame): Raw Chase-format DataFrame
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame aligned with ReadyMode structure
+    """
+    # Drop total row
+    df_raw = df_raw[~df_raw["Agente"].astype(str).str.contains("Total", na=False)].copy()
+
+    # Rename needed columns
+    df_raw = df_raw.rename(columns={
+        "Agente": "Agent",
+        "Horas Trabajadas": "Time Connected",
+        "Duración de Conversación": "Talk Time",
+        "Duración de Receso": "Break",
+        "Tiempo de Finalización": "Wrap Up",
+        "Ventas/Potencial/Cita": "Sales",
+        "Tiempo en Sesión": "Shift End"
+    })
+
+    # Normalize
+    df_raw["Agent"] = df_raw["Agent"].astype(str).str.strip()
+
+    # 🛡️ Clean Sales column by enforcing numeric fallback
+    df_raw["Sales"] = pd.to_numeric(
+        df_raw["Sales"].astype(str).str.extract(r"(\d+)")[0],
+        errors="coerce"
+    ).fillna(0).astype(int)
+
+
+    # Convert decimal hours
+    df_raw["Time Connected"] = pd.to_numeric(df_raw["Time Connected"], errors="coerce").fillna(0)
+
+    # Convert time strings (hh:mm:ss) to decimal
+    for col in ["Talk Time", "Break", "Wrap Up", "Shift End"]:
+        if col in df_raw.columns:
+            df_raw[col] = df_raw[col].apply(time_string_to_decimal)
+
+    # Add missing columns to align with your standard logic
+    df_raw["1st Call"] = ""
+    df_raw["_MismatchAmount"] = 0
+    df_raw["Time Mismatch"] = "✅"
+    df_raw["_Debug"] = ""
+
+
+    # 🔒 Enforce sales as safe int values globally before returning
+    df_raw["Sales"] = pd.to_numeric(df_raw["Sales"], errors="coerce").fillna(0).astype(int)
+
+    print("✅ CHASE DATA PREVIEW:")
+    print(df_raw[["Agent", "Sales", "Talk Time", "Break", "Wrap Up", "Time Connected"]].head(10))
+
+
+    return df_raw
+
+
+
+
 
 
 
@@ -368,7 +429,11 @@ def get_latest_dropbox_csv(folder_path, dbx=None):
     try:
         # Fetch all entries and filter CSVs
         entries = dbx.files_list_folder(folder_path).entries
-        csv_files = [f for f in entries if f.name.endswith(".csv")][:3]  # limit to 3 files
+        csv_files = sorted(
+            [f for f in entries if f.name.endswith(".csv")],
+            key=lambda x: x.server_modified,
+            reverse=True
+        )
         if not csv_files:
             return []
 
@@ -504,14 +569,25 @@ def insert_total_rows(df, report_date):
             result.append(row.to_dict())
 
         if len(group) > 1:
+            print(f"🧪 GROUPED AGENT: {agent}")
+            print(group[["Agent", "Sales", "Break", "Wrap Up", "Talk Time", "Time Connected"]])
+
+            print(f"➡️ Creating TOTAL row for: {agent}")
+            print("RAW SALES:", group["Sales"].tolist())
+            print("RAW BREAK:", group["Break"].tolist())
+            print("RAW WRAP:", group["Wrap Up"].tolist())
+            print("RAW TALK:", group["Talk Time"].tolist())
+            print("RAW TC:", group["Time Connected"].tolist())
+
             total_row = group.iloc[-1].copy()
 
             for col in numeric_cols:
                 if col in group.columns:
-                    if col == "Sales":
-                        total_row[col] = pd.to_numeric(group[col], errors="coerce").fillna(0).astype(int).sum()
-                    else:
-                        total_row[col] = group[col].sum()
+                    clean_vals = pd.to_numeric(group[col], errors="coerce").fillna(0)
+                    total_row[col] = int(clean_vals.sum()) if col == "Sales" else clean_vals.sum()
+
+
+            
 
 
             if "1st Call" in group.columns:
@@ -535,6 +611,11 @@ def insert_total_rows(df, report_date):
                 mismatch_sum,
                 report_date,
             )
+
+
+            print(f"🧪 GROUPED AGENT: {agent}")
+            print(group[["Agent", "Sales", "Break", "Wrap Up", "Talk Time", "Time Connected"]])
+
             total_row["Time To Goal"] = ttg
             total_row["_TTG_Adjusted"] = adjusted
             total_row["is_total"] = True
@@ -661,6 +742,18 @@ def detect_inconsistencies(df):
 
 
 
+def classify_office(agent_name):
+    if isinstance(agent_name, str):
+        if agent_name.startswith("n "): return "Tepic"
+        if agent_name.startswith("a "): return "Army"
+        if agent_name.startswith("w "): return "West"
+        if agent_name.startswith("sp ") or agent_name.startswith("pr "): return "Sp & Prime"
+        if agent_name.startswith("e "): return "Egypt"
+        if agent_name.startswith("s "): return "Spanish"
+        if agent_name.startswith("g "): return "Pakistan"
+    return "Other"
+
+
 
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -698,8 +791,50 @@ def load_and_process_data(uploaded_dfs, report_date):
         df = df[:-1] if len(df) > 0 else df
         df = df.dropna(how="all")
 
+
+        # Normalize raw agent names: remove non-breaking and trailing spaces
+        if "Login ID" in df.columns:
+            df["Login ID"] = (
+                df["Login ID"]
+                .astype(str)
+                .str.replace("\u00A0", " ", regex=False)  # replace non-breaking space
+                .str.replace(r"\s+", " ", regex=True)     # collapse weird spacing
+                .str.strip()                              # remove leading/trailing
+            )
+
+
+        # 🆕 Detect Chase data (column 'Agente' is unique to Chase files)
+        if "Agente" in df.columns:
+            df = load_chase_data(df)
+
+            # Continue like ReadyMode from here
+            df["Report Date"] = report_date.strftime("%Y-%m-%d")
+            df["Server"] = "Chase"
+
+            # Assign office using existing logic
+            df["Office"] = df["Agent"].apply(classify_office)
+
+            # Add required columns if missing
+            for col in DISPLAY_COLUMN_ORDER:
+                if col not in df.columns:
+                    df[col] = ""
+
+
+            df = df[[col for col in DISPLAY_COLUMN_ORDER if col in df.columns] + ["Office", "Report Date", "Server"]]
+            df = df.sort_values(by="Agent", ascending=True)
+            df.index = range(1, len(df) + 1)
+
+            combined_data["Chase"] = df
+            print("✅ CHASE LOADED INTO combined_data:")
+            print(df[["Agent", "Sales", "Talk Time", "Break", "Wrap Up", "Time Connected"]].head(10))
+
+            continue  # skip rest of ReadyMode logic
+
+
+
         # Rename columns using global mapping
         df.rename(columns=COLUMN_RENAME_MAP, inplace=True)
+
 
         # Convert time-related columns to decimal format
         for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
@@ -743,17 +878,6 @@ def load_and_process_data(uploaded_dfs, report_date):
 
         df[["Time To Goal", "_TTG_Adjusted"]] = df.apply(calculate_ttgs, axis=1)
 
-        # Classify Office based on Login ID prefix
-        def classify_office(agent_name):
-            if isinstance(agent_name, str):
-                if agent_name.startswith("n "): return "Tepic"
-                if agent_name.startswith("a "): return "Army"
-                if agent_name.startswith("w "): return "West"
-                if agent_name.startswith("sp ") or agent_name.startswith("pr "): return "Sp & Prime"
-                if agent_name.startswith("e "): return "Egypt"
-                if agent_name.startswith("s "): return "Spanish"
-                if agent_name.startswith("g "): return "Pakistan"
-            return "Other"
 
         df["Office"] = df["Agent"].apply(classify_office)
 
@@ -785,6 +909,13 @@ def load_and_process_data(uploaded_dfs, report_date):
         
         combined_data[f"Server {server_number_str}"] = df
         server_number += 1
+
+
+    for df_name, df in combined_data.items():
+        for col in ["Sales", "Break", "Wrap Up", "Talk Time", "Time Connected"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(float)
+
 
     return combined_data
 
@@ -954,6 +1085,9 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
             </div>
         """)
 
+
+        print(f"📤 EXPORTING {office} — {len(office_df)} agents")
+        print(office_df[["Agent", "Sales", "Time Connected", "Break", "Wrap Up"]])
 
 
         for _, row in office_df.iterrows():

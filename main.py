@@ -594,8 +594,15 @@ def render_agent_block(row, unique_key_suffix=None):
 selected_date_str = report_date.strftime("%A, %B %d, %Y")
 st.markdown(f"🕒 **Report Metrics: {selected_date_str}**")
 
+
 # === Tabs ===
-tab2, tab1 = st.tabs(["📈 Agent Progress Dashboard", "📊 Daily Metrics Overview"])
+tab2, tab1, tab3 = st.tabs([
+    "📈 Agent Progress Dashboard",
+    "📊 Daily Metrics Overview",
+    "📈 Daily Sales Trend"  
+])
+
+
 
 
 ############################
@@ -1013,6 +1020,60 @@ if (
     
 
 
+
+
+
+with tab3:
+    st.markdown("### 📈 **Daily Sales Trend — Total Call Center Sales**")
+
+    try:
+        # Load from Google Sheet
+        sheet = connect_to_gsheet(SHEET_ID)
+        worksheet = sheet.worksheet("Leads History")
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+
+        # Validate expected columns
+        if "Date" not in df.columns or "Total sales" not in df.columns:
+            st.error("❌ Sheet must include columns: 'Date', 'Total sales'")
+            st.stop()
+
+        # Clean and sort
+        df["Date"] = pd.to_datetime(df["Date"] + " 2025", errors="coerce")
+        df["Total sales"] = pd.to_numeric(df["Total sales"], errors="coerce").fillna(0)
+        df = df.sort_values("Date")
+
+        # Add color logic
+        df["Previous"] = df["Total sales"].shift(1)
+        df["Delta"] = df["Total sales"] - df["Previous"]
+        df["Color"] = df["Delta"].apply(lambda x: "green" if x > 0 else "red")
+
+        # Create bar chart
+        fig = go.Figure()
+        for _, row in df.iterrows():
+            fig.add_trace(go.Bar(
+                x=[row["Date"].strftime("%b %d")],
+                y=[row["Total sales"]],
+                marker_color=row["Color"],
+                name=row["Date"].strftime("%Y-%m-%d"),
+                hovertext=f"{row['Total sales']} sales",
+                hoverinfo="text"
+            ))
+
+        fig.update_layout(
+            title="📞 Total Daily Sales",
+            xaxis_title="Date",
+            yaxis_title="Sales",
+            xaxis=dict(tickangle=-45),
+            height=450,
+            showlegend=False,
+            plot_bgcolor="white"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"❌ Error loading sales data: {e}")
 
 
 
