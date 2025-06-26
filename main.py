@@ -543,11 +543,17 @@ def render_agent_block(row, unique_key_suffix=None):
     if is_total:
         agent_label = f"{agent} (Total)"
     else:
-        if server_label.startswith("Server") and server_label[-1].isdigit():
+        # If this row came from the Chase report
+        if server_label == "Chase":
+            agent_label = f"{agent} (Chase)"
+        # Standard ReadyMode servers: Server 1,2,3…
+        elif server_label.startswith("Server") and server_label[-1].isdigit():
             server_number = server_label[-1]
+            agent_label = f"{agent} on Server {server_number}"
+        # Any other unexpected source
         else:
-            server_number = "?"
-        agent_label = f"{agent} on Server {server_number}"
+            agent_label = f"{agent} on {server_label}"
+
 
 
     text_block = f"""

@@ -35,33 +35,33 @@ import gspread
 ## === TIME FORMATTERS ===
 def format_time_columns(df):
     """
-    Converts time-related decimal columns into human-readable strings for UI display.
-
-    - Applies hh:mm:ss formatting.
-    - Adds ⚙️ icon to 'Time To Goal' if adjusted (via _TTG_Adjusted flag).
-
-    Parameters:
-        df (pd.DataFrame): DataFrame containing time columns in decimal hours
-
     Returns:
-        pd.DataFrame: Updated DataFrame with formatted strings
+        pd.DataFrame: Updated DataFrame with formatted time-strings
     """
-
     time_columns = ["Time Connected", "Break", "Talk Time", "Wrap Up", "Time To Goal"]
 
     for col in time_columns:
         if col in df.columns:
+            # 1) Coerce blanks/invalid → NaN
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
             if col == "Time To Goal":
-                # Special case: flag adjustments with gear icon
+                # include gear icon if _TTG_Adjusted is True
                 df[col] = df.apply(
-                    lambda row: decimal_to_hhmmss(row[col]) + (" ⚙️" if row.get("_TTG_Adjusted") else ""),
+                    lambda row: (
+                        decimal_to_hhmmss(row[col])
+                        + (" ⚙️" if row.get("_TTG_Adjusted") else "")
+                    ) if pd.notna(row[col]) else "--:--:--",
                     axis=1
                 )
             else:
-                # Standard time conversion without +/- sign
-                df[col] = df[col].apply(decimal_to_hhmmss_nosign)
+                # neutral format, no +/- sign
+                df[col] = df[col].apply(
+                    lambda x: decimal_to_hhmmss_nosign(x) if pd.notna(x) else "--:--:--"
+                )
 
     return df
+
 
 
 
@@ -135,8 +135,13 @@ def time_string_to_decimal(time_str):
         return None
 
     try:
+        # Handle standard HH:MM:SS strings
+        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', str(time_str)):
+            h, m, s = map(int, str(time_str).split(':'))
+            return round(h + m/60 + s/3600, 3)
         # Try direct float conversion (e.g., '1.5')
         return float(time_str)
+
     except ValueError:
         pass  # Proceed to parsing if not a float
 
@@ -325,62 +330,52 @@ def sort_dataframe(df, selected_column, sort_direction_map=None):
 
 
 def load_chase_data(df_raw):
-    """
-    Converts Chase-format agent data into your standard ReadyMode-compatible format.
+    # 1) Drop any “Total” rows
+    df = df_raw[~df_raw["Agente"].astype(str).str.contains("Total", na=False)].copy()
 
-    Parameters:
-        df_raw (pd.DataFrame): Raw Chase-format DataFrame
-
-    Returns:
-        pd.DataFrame: Cleaned DataFrame aligned with ReadyMode structure
-    """
-    # Drop total row
-    df_raw = df_raw[~df_raw["Agente"].astype(str).str.contains("Total", na=False)].copy()
-
-    # Rename needed columns
-    df_raw = df_raw.rename(columns={
+    # 2) Rename exactly the Timesheet headers
+    df = df.rename(columns={
         "Agente": "Agent",
-        "Horas Trabajadas": "Time Connected",
-        "Duración de Conversación": "Talk Time",
-        "Duración de Receso": "Break",
-        "Tiempo de Finalización": "Wrap Up",
-        "Ventas/Potencial/Cita": "Sales",
-        "Tiempo en Sesión": "Shift End"
+        "Hora de Inicio de Sesión": "1st Call",
+        "Hora de Cierre de Sesión":  "Shift End",
+        "Tiempo en Sesión":           "Time Connected",
+        "Duración de Conversación":   "Talk Time",
+        "Duración de Receso":         "Break",
+        "Tiempo de Finalización":     "Wrap Up",
+        # optional, if you ever see it
+        "Ventas/Potencial/Cita":      "Sales",
     })
 
-    # Normalize
-    df_raw["Agent"] = df_raw["Agent"].astype(str).str.strip()
+    # 3) Strip whitespace on Agent
+    df["Agent"] = df["Agent"].astype(str).str.strip()
 
-    # 🛡️ Clean Sales column by enforcing numeric fallback
-    df_raw["Sales"] = pd.to_numeric(
-        df_raw["Sales"].astype(str).str.extract(r"(\d+)")[0],
-        errors="coerce"
-    ).fillna(0).astype(int)
+    # 4) Normalize Sales → int  (zero if missing)
+    if "Sales" in df.columns:
+        df["Sales"] = (
+            pd.to_numeric(df["Sales"].astype(str).str.extract(r"(\d+)")[0],
+                          errors="coerce")
+              .fillna(0)
+              .astype(int)
+        )
+    else:
+        df["Sales"] = 0
 
+    # 5) Parse every duration column (including Time Connected + Shift End)
+    for col in ["Time Connected", "Talk Time", "Break", "Wrap Up", "Shift End"]:
+        if col in df.columns:
+            df[col] = df[col].apply(time_string_to_decimal).fillna(0.0)
 
-    # Convert decimal hours
-    df_raw["Time Connected"] = pd.to_numeric(df_raw["Time Connected"], errors="coerce").fillna(0)
+    # 6) Ensure 1st Call exists so downstream code can always reference it
+    if "1st Call" not in df.columns:
+        df["1st Call"] = ""
 
-    # Convert time strings (hh:mm:ss) to decimal
-    for col in ["Talk Time", "Break", "Wrap Up", "Shift End"]:
-        if col in df_raw.columns:
-            df_raw[col] = df_raw[col].apply(time_string_to_decimal)
+    # 7) Fill in the “mismatch” and debug placeholders
+    df["_MismatchAmount"] = 0
+    df["Time Mismatch"]   = "✅"
+    df["_Debug"]          = ""
 
-    # Add missing columns to align with your standard logic
-    df_raw["1st Call"] = ""
-    df_raw["_MismatchAmount"] = 0
-    df_raw["Time Mismatch"] = "✅"
-    df_raw["_Debug"] = ""
+    return df
 
-
-    # 🔒 Enforce sales as safe int values globally before returning
-    df_raw["Sales"] = pd.to_numeric(df_raw["Sales"], errors="coerce").fillna(0).astype(int)
-
-    print("✅ CHASE DATA PREVIEW:")
-    print(df_raw[["Agent", "Sales", "Talk Time", "Break", "Wrap Up", "Time Connected"]].head(10))
-
-
-    return df_raw
 
 
 
@@ -805,30 +800,49 @@ def load_and_process_data(uploaded_dfs, report_date):
 
         # 🆕 Detect Chase data (column 'Agente' is unique to Chase files)
         if "Agente" in df.columns:
+            # 1) Load & rename chase columns
             df = load_chase_data(df)
-
-            # Continue like ReadyMode from here
             df["Report Date"] = report_date.strftime("%Y-%m-%d")
+
+            # 2) Convert all time columns into decimal hours
+            for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
+                if col in df.columns:
+                    df[col] = df[col].apply(time_string_to_decimal)
+
+            # 3) Compute Time To Goal (TTG) for Chase rows
+            goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
+            def calculate_ttgs_chase(row):
+                tc = row.get("Time Connected", 0)
+                br = row.get("Break", 0)
+                wr = row.get("Wrap Up", 0)
+                # same cross-compensation you use elsewhere
+                extra_break = max(0, br - break_limit)
+                extra_wrap  = max(0, wr - wrap_limit)
+                available_break = max(0, break_limit - br)
+                available_wrap  = max(0, wrap_limit - wr)
+                wrap_offset = min(extra_wrap, available_break)
+                break_offset= min(extra_break, available_wrap)
+                extra_wrap  -= wrap_offset
+                extra_break -= break_offset
+                total_penalty   = extra_break + extra_wrap
+                mismatch_penalty = 0
+                ttg = (tc - goal_time - total_penalty) - mismatch_penalty
+                return pd.Series([ttg, False])
+            df[["Time To Goal", "_TTG_Adjusted"]] = df.apply(calculate_ttgs_chase, axis=1)
+
+            # 4) Label & finalize
             df["Server"] = "Chase"
-
-            # Assign office using existing logic
             df["Office"] = df["Agent"].apply(classify_office)
-
-            # Add required columns if missing
             for col in DISPLAY_COLUMN_ORDER:
                 if col not in df.columns:
                     df[col] = ""
-
-
-            df = df[[col for col in DISPLAY_COLUMN_ORDER if col in df.columns] + ["Office", "Report Date", "Server"]]
+            df = df[[c for c in DISPLAY_COLUMN_ORDER if c in df.columns]
+                    + ["Office", "Report Date", "Server"]]
             df = df.sort_values(by="Agent", ascending=True)
             df.index = range(1, len(df) + 1)
 
             combined_data["Chase"] = df
-            print("✅ CHASE LOADED INTO combined_data:")
-            print(df[["Agent", "Sales", "Talk Time", "Break", "Wrap Up", "Time Connected"]].head(10))
-
-            continue  # skip rest of ReadyMode logic
+            continue
 
 
 
@@ -1216,8 +1230,6 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
 
 ## === VISUALIZATION HELPERS (PDF/Charts) ===
-
-
 def build_agent_html_section(row, chart_path):
     report_date = pd.to_datetime(row["Report Date"])
     goal_time, break_limit, wrap_limit, talk_time_goal, shift_start = get_daily_time_goals(report_date)
@@ -1261,6 +1273,19 @@ def build_agent_html_section(row, chart_path):
     except Exception:
         inline_status = "<span style='color:#000000; font-weight:bold'>Clock-in unknown</span>"
 
+    # 🔵 Label logic: human-readable agent_label (Total / Chase / Server N / fallback)
+    agent = row["Agent"]
+    is_total = row.get("is_total") is True
+    server_label = row.get("Server", "")
+    if is_total:
+        agent_label = f"{agent} (Total)"
+    elif server_label == "Chase":
+        agent_label = f"{agent} (Chase)"
+    elif server_label.startswith("Server") and server_label[-1].isdigit():
+        agent_label = f"{agent} on {server_label}"
+    else:
+        agent_label = f"{agent} on {server_label}"
+
     # === Final HTML block ===
     return f"""
     <table style="width: 100%; border-spacing: 20px 10px; margin-bottom: 20px; page-break-inside: avoid;">
@@ -1268,7 +1293,7 @@ def build_agent_html_section(row, chart_path):
             <td style="vertical-align: top; width: 48%;">
                 <div style="font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: bold; color: #000000; line-height: 1.5;">
                     <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #007acc;">
-                        {row['Agent']} {inline_status}
+                        {agent_label} {inline_status}
                     </h2>
                     <p style="margin: 4px 0 12px 0;"><strong>Time To Goal:</strong> {time_to_goal_display}</p>
                     <p style="margin: 4px 0;"><strong>Sales:</strong> {row.get('Sales', 0)}</p>
