@@ -1064,6 +1064,12 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
     report_date = pd.to_datetime(sample_row["Report Date"])
     agent_name = sample_row["Agent"]
     goal_time, break_limit, wrap_limit, talk_goal, _ = get_daily_time_goals(report_date)
+    goal_time   = decimal_to_hhmmss_nosign(goal_time)
+    break_limit = decimal_to_hhmmss_nosign(break_limit)
+    wrap_limit  = decimal_to_hhmmss_nosign(wrap_limit)
+    talk_goal   = decimal_to_hhmmss_nosign(talk_goal)
+
+
 
 
 
