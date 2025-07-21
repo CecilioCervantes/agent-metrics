@@ -807,8 +807,7 @@ def load_and_process_data(uploaded_dfs, report_date):
             # 1) Load & rename chase columns
             df = load_chase_data(df)
             df["Report Date"] = report_date.strftime("%Y-%m-%d")
-
-            x
+            
 
             # 2) Convert all time columns into decimal hours
             for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
