@@ -18,6 +18,7 @@ import json
 import streamlit as st
 from google.oauth2.service_account import Credentials
 import gspread
+import inspect
 
 
 
@@ -459,30 +460,41 @@ def get_daily_time_goals(report_date):
     """
     Returns expected performance metrics based on the day of the week.
 
-    Used to evaluate whether an agent meets daily login, break, and wrap-up goals.
-
-    Parameters:
-        report_date (datetime or pd.Timestamp): The date of the report
-
-    Returns:
-        Tuple[float, float, float, float or None, str]:
-            - goal_time (float): Required login time in decimal hours
-            - break_limit (float): Maximum break time allowed
-            - wrap_limit (float): Maximum wrap-up time allowed
-            - talk_time_goal (float or None): Minimum expected talk time
-            - shift_start_time (str): Expected first call time (HH:MM, 24-hour format)
+    This version auto-detects if the caller is using a Commercial agent,
+    and adjusts the wrap-up time accordingly without needing to pass agent_name.
     """
+    # Try to detect agent_name from the caller's frame 
+    try:
+        caller = inspect.stack()[1].frame
+        agent_name = caller.f_locals.get("agent") or caller.f_locals.get("row", {}).get("Agent") \
+                     or caller.f_locals.get("row", {}).get("agent") or None
+    except Exception:
+        agent_name = None
+
+    is_commercial = False
+    if isinstance(agent_name, str):
+        is_commercial = classify_office(agent_name) == "Commercial"
+
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
-    if weekday in [0, 1, 2, 3]:  # Mon–Thu
-        return 9.5, 2.333, 1.0, 4.5, "07:45"
-    elif weekday == 4:  # Friday
-        return 7.5, 2.0, 0.75, 3.5, "07:45"
-    elif weekday == 5:  # Saturday
-        return 6, 1.5, 0.75, 2.75, "08:15"
-    elif weekday == 6:  # Sunday
-        return 5.0, 1.0, 0.75, None, "09:00"
+    # Mon–Thu
+    if weekday in [0, 1, 2, 3]:
+        wrap_limit = 1.75 if is_commercial else 1.0
+        return 9.5, 2.333, wrap_limit, 4.5, "07:45"
 
+    # Friday
+    elif weekday == 4:
+        wrap_limit = 1.5 if is_commercial else 0.75
+        return 7.5, 2.0, wrap_limit, 3.5, "07:45"
+
+    # Saturday
+    elif weekday == 5:
+        wrap_limit = 0.75 if is_commercial else 0.75
+        return 6, 1.5, wrap_limit, 2.75, "08:15"
+
+    # Sunday (same for all)
+    elif weekday == 6:
+        return 5.0, 1.0, 0.75, None, "09:00"
 
 
 
