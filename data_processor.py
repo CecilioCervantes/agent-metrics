@@ -808,6 +808,16 @@ def load_and_process_data(uploaded_dfs, report_date):
             df = load_chase_data(df)
             df["Report Date"] = report_date.strftime("%Y-%m-%d")
             
+            # — Normalize Chase “1st Call” to local ReadyMode format —
+            #    • Parse “21/07/2025 9:42:34”
+            #    • Subtract 2 hours
+            #    • Reformat to e.g. “Jul 21 7:42AM”
+            df["1st Call"] = (
+                pd.to_datetime(df["1st Call"], dayfirst=True, errors="coerce")
+                  .sub(pd.Timedelta(hours=2))
+                  .dt.strftime("%b %d %I:%M%p")
+                  .str.replace(r"^0", "", regex=True)  # drop leading zero in hour
+            )
 
             # 2) Convert all time columns into decimal hours
             for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
