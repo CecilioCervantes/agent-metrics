@@ -328,7 +328,6 @@ def sort_dataframe(df, selected_column, sort_direction_map=None):
 
 
 
-
 def load_chase_data(df_raw):
     # 1) Drop any “Total” rows
     df = df_raw[~df_raw["Agente"].astype(str).str.contains("Total", na=False)].copy()
@@ -738,7 +737,13 @@ def detect_inconsistencies(df):
 
 
 def classify_office(agent_name):
+    commercial_agents = {
+        "sp tony", "sp allan", "sp chris", "sp jennifer", "sp mathew", "sp steve"
+    }
+
     if isinstance(agent_name, str):
+        if agent_name.lower() in commercial_agents:
+            return "Commercial"
         if agent_name.startswith("n "): return "Tepic"
         if agent_name.startswith("a "): return "Army"
         if agent_name.startswith("w "): return "West"
@@ -747,7 +752,6 @@ def classify_office(agent_name):
         if agent_name.startswith("s "): return "Spanish"
         if agent_name.startswith("g "): return "Pakistan"
     return "Other"
-
 
 
 
@@ -803,6 +807,8 @@ def load_and_process_data(uploaded_dfs, report_date):
             # 1) Load & rename chase columns
             df = load_chase_data(df)
             df["Report Date"] = report_date.strftime("%Y-%m-%d")
+
+            x
 
             # 2) Convert all time columns into decimal hours
             for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
@@ -1140,12 +1146,13 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
             if is_total:
                 agent_label = f"{agent} (Total)"
+            elif server_label == "Chase":
+                agent_label = f"{agent} (Chase)"
+            elif server_label.startswith("Server") and server_label[-1].isdigit():
+                agent_label = f"{agent} on {server_label}"
             else:
-                if server_label.startswith("Server") and server_label[-1].isdigit():
-                    server_number = server_label[-1]
-                else:
-                    server_number = "?"
-                agent_label = f"{agent} on Server {server_number}"
+                agent_label = f"{agent} on {server_label}"
+
 
             # Chart image path
             chart_filename = f"{agent.replace(' ', '_')}_{row.name}.png"
@@ -1228,88 +1235,6 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
 
 
-
-## === VISUALIZATION HELPERS (PDF/Charts) ===
-def build_agent_html_section(row, chart_path):
-    report_date = pd.to_datetime(row["Report Date"])
-    goal_time, break_limit, wrap_limit, talk_time_goal, shift_start = get_daily_time_goals(report_date)
-
-    def format_time(val):
-        return decimal_to_hhmmss_nosign(val) if pd.notna(val) else "--:--:--"
-
-    def format_time_signed(val):
-        return decimal_to_hhmmss(val) if pd.notna(val) else "--:--:--"
-
-    # === Time To Goal display (signed format always shown) ===
-    time_to_goal_display = format_time_signed(row.get("Time To Goal", None))
-
-    # === Clock-in analysis ===
-    first_call_str = str(row.get("1st Call", ""))
-    try:
-        call_dt = pd.to_datetime(first_call_str + f" {report_date.year}")
-        shift_time_obj = datetime.strptime(shift_start, "%H:%M").time()
-        shift_dt = call_dt.replace(hour=shift_time_obj.hour, minute=shift_time_obj.minute, second=0)
-
-        delta_minutes = (call_dt - shift_dt).total_seconds() / 60
-        minutes_abs = abs(int(delta_minutes))
-        direction = "early" if delta_minutes < 0 else "late"
-
-        hours = minutes_abs // 60
-        minutes = minutes_abs % 60
-        readable_delay = f"{hours}h {minutes}m" if hours > 0 else f"{minutes} min"
-
-        if delta_minutes <= 0:
-            status_label = "On time"
-            status_color = "#00aa00"
-        elif delta_minutes <= 5:
-            status_label = "Just made it"
-            status_color = "#FFD700"
-        else:
-            status_label = "Late"
-            status_color = "#cc0000"
-
-        inline_status = f"<span style='color:{status_color}; font-weight:bold'>{status_label} ({readable_delay} {direction})</span>"
-
-    except Exception:
-        inline_status = "<span style='color:#000000; font-weight:bold'>Clock-in unknown</span>"
-
-    # 🔵 Label logic: human-readable agent_label (Total / Chase / Server N / fallback)
-    agent = row["Agent"]
-    is_total = row.get("is_total") is True
-    server_label = row.get("Server", "")
-    if is_total:
-        agent_label = f"{agent} (Total)"
-    elif server_label == "Chase":
-        agent_label = f"{agent} (Chase)"
-    elif server_label.startswith("Server") and server_label[-1].isdigit():
-        agent_label = f"{agent} on {server_label}"
-    else:
-        agent_label = f"{agent} on {server_label}"
-
-    # === Final HTML block ===
-    return f"""
-    <table style="width: 100%; border-spacing: 20px 10px; margin-bottom: 20px; page-break-inside: avoid;">
-        <tr>
-            <td style="vertical-align: top; width: 48%;">
-                <div style="font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: bold; color: #000000; line-height: 1.5;">
-                    <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #007acc;">
-                        {agent_label} {inline_status}
-                    </h2>
-                    <p style="margin: 4px 0 12px 0;"><strong>Time To Goal:</strong> {time_to_goal_display}</p>
-                    <p style="margin: 4px 0;"><strong>Sales:</strong> {row.get('Sales', 0)}</p>
-                    <p style="margin: 4px 0;"><strong>- Time Connected Goal:</strong> {format_time(goal_time)}</p>
-                    <p style="margin: 4px 0;"><strong>- Break Limit:</strong> {format_time(break_limit)}</p>
-                    <p style="margin: 4px 0;"><strong>- Wrap-Up Limit:</strong> {format_time(wrap_limit)}</p>
-                    <p style="margin: 4px 0;"><strong>- Talk Time Goal:</strong> {format_time(talk_time_goal)}</p>
-                </div>
-            </td>
-            <td style="vertical-align: top; width: 52%;">
-                <img src="{chart_path}" style="width: 100%; border: none; border-radius: 6px;" />
-            </td>
-        </tr>
-    </table>
-    <hr style="border: none; border-top: 1px solid #ccc; margin: 30px 0;" />
-    """
 
 
 
