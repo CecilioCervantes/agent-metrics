@@ -490,7 +490,7 @@ def get_daily_time_goals(report_date):
     # Saturday
     elif weekday == 5:
         wrap_limit = 0.75 if is_commercial else 0.75
-        return 6, 1.5, wrap_limit, 2.75, "08:15"
+        return 6, 1, wrap_limit, 2.75, "08:15"
 
     # Sunday (same for all)
     elif weekday == 6:
@@ -1040,10 +1040,24 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
     html_blocks = []
 
-    # Add header + goal paragraph using any row
-    sample_row = next(iter(grouped_data.values()))[["Report Date"]].iloc[0]
+    # 🔍 Find a real (non-total) agent row for accurate goals
+    sample_row = None
+    for df in grouped_data.values():
+        for _, row in df.iterrows():
+            if not row.get("is_total", False):
+                sample_row = row
+                break
+        if sample_row is not None:
+            break
+
+    if sample_row is None:
+        raise ValueError("❌ No valid agent row found for goal summary in PDF.")
+
     report_date = pd.to_datetime(sample_row["Report Date"])
+    agent_name = sample_row["Agent"]
     goal_time, break_limit, wrap_limit, talk_goal, _ = get_daily_time_goals(report_date)
+
+    # Format them for display
     goal_time = decimal_to_hhmmss_nosign(goal_time)
     break_limit = decimal_to_hhmmss_nosign(break_limit)
     wrap_limit = decimal_to_hhmmss_nosign(wrap_limit)
