@@ -1040,7 +1040,7 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
     html_blocks = []
 
-    # 🔍 Find a real (non-total) agent row for accurate goals
+    # 🔍 Try to find a non-total agent row; fallback to any row if needed
     sample_row = None
     for df in grouped_data.values():
         for _, row in df.iterrows():
@@ -1050,18 +1050,20 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
         if sample_row is not None:
             break
 
+    # 🔁 If no non-total found, fallback to just any row
     if sample_row is None:
-        raise ValueError("❌ No valid agent row found for goal summary in PDF.")
+        for df in grouped_data.values():
+            if not df.empty:
+                sample_row = df.iloc[0]
+                break
+
+    # 🚨 Final guard
+    if sample_row is None:
+        raise ValueError("❌ No rows found at all to generate goal summary for PDF.")
 
     report_date = pd.to_datetime(sample_row["Report Date"])
     agent_name = sample_row["Agent"]
     goal_time, break_limit, wrap_limit, talk_goal, _ = get_daily_time_goals(report_date)
-
-    # Format them for display
-    goal_time = decimal_to_hhmmss_nosign(goal_time)
-    break_limit = decimal_to_hhmmss_nosign(break_limit)
-    wrap_limit = decimal_to_hhmmss_nosign(wrap_limit)
-    talk_goal = decimal_to_hhmmss_nosign(talk_goal)
 
 
 
