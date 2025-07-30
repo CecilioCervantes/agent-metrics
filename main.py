@@ -183,9 +183,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.markdown("""
     <style>
     /* Global font for the entire app */
-    .appview-container * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-                     Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+        .appview-container *:not([class*="material-icons"]):not([class*="material-symbols"]) {
         font-size: 15px !important;
         line-height: 1.5;
     }
