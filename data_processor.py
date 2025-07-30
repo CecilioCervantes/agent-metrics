@@ -455,12 +455,12 @@ def get_latest_dropbox_csv(folder_path, dbx=None):
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------
 ### === TIME RULES / GOALS ===
 
-
 def get_daily_time_goals(report_date):
     """
     Returns expected performance metrics based on the day of the week.
     Egypt office uses Mon–Thu metrics on Friday as well.
     West office has specific agents that also follow the Egypt Friday schedule.
+    Prime office agents (prefix "pr ") work 30 minutes more Mon–Fri.
     """
     try:
         caller = inspect.stack()[1].frame
@@ -474,6 +474,9 @@ def get_daily_time_goals(report_date):
     if isinstance(agent_name, str):
         office = classify_office(agent_name)
         is_commercial = office == "Commercial"
+        agent_name = agent_name.lower().strip()
+    else:
+        agent_name = None
 
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
@@ -482,18 +485,23 @@ def get_daily_time_goals(report_date):
 
     # 🟢 Egypt override: Friday acts like Thursday
     if (office == "Egypt" and weekday == 4) or \
-       (weekday == 4 and isinstance(agent_name, str) and agent_name.lower() in egypt_west_agents):
+       (weekday == 4 and agent_name in egypt_west_agents):
         weekday = 3  
+
+    # 🔵 Prime agent flag (prefix "pr ")
+    is_prime = isinstance(agent_name, str) and agent_name.startswith("pr ")
 
     # Mon–Thu
     if weekday in [0, 1, 2, 3]:
         wrap_limit = 1.75 if is_commercial else 1.0
-        return 9.5, 2.333, wrap_limit, 4.5, "07:45"
+        goal_time = 10 if is_prime else 9.5
+        return goal_time, 2.333, wrap_limit, 4.5, "07:45"
 
     # Friday
     elif weekday == 4:
         wrap_limit = 1.5 if is_commercial else 0.75
-        return 7.5, 2.0, wrap_limit, 3.5, "07:45"
+        goal_time = 8 if is_prime else 7.5
+        return goal_time, 2.0, wrap_limit, 3.5, "07:45"
 
     # Saturday
     elif weekday == 5:
