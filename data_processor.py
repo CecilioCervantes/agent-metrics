@@ -18,6 +18,7 @@ import json
 import streamlit as st
 from google.oauth2.service_account import Credentials
 import gspread
+import inspect
 
 
 
@@ -328,7 +329,6 @@ def sort_dataframe(df, selected_column, sort_direction_map=None):
 
 
 
-
 def load_chase_data(df_raw):
     # 1) Drop any “Total” rows
     df = df_raw[~df_raw["Agente"].astype(str).str.contains("Total", na=False)].copy()
@@ -459,33 +459,50 @@ def get_latest_dropbox_csv(folder_path, dbx=None):
 def get_daily_time_goals(report_date):
     """
     Returns expected performance metrics based on the day of the week.
-
-    Used to evaluate whether an agent meets daily login, break, and wrap-up goals.
-
-    Parameters:
-        report_date (datetime or pd.Timestamp): The date of the report
-
-    Returns:
-        Tuple[float, float, float, float or None, str]:
-            - goal_time (float): Required login time in decimal hours
-            - break_limit (float): Maximum break time allowed
-            - wrap_limit (float): Maximum wrap-up time allowed
-            - talk_time_goal (float or None): Minimum expected talk time
-            - shift_start_time (str): Expected first call time (HH:MM, 24-hour format)
+    Egypt office uses Mon–Thu metrics on Friday as well.
+    West office has specific agents that also follow the Egypt Friday schedule.
     """
+    try:
+        caller = inspect.stack()[1].frame
+        agent_name = caller.f_locals.get("agent") or caller.f_locals.get("row", {}).get("Agent") \
+                     or caller.f_locals.get("row", {}).get("agent") or None
+    except Exception:
+        agent_name = None
+
+    is_commercial = False
+    office = None
+    if isinstance(agent_name, str):
+        office = classify_office(agent_name)
+        is_commercial = office == "Commercial"
+
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
-    if weekday in [0, 1, 2, 3]:  # Mon–Thu
-        return 9.5, 2.333, 1.0, 4.5, "07:45"
-    elif weekday == 4:  # Friday
-        return 7.5, 2.0, 0.75, 3.5, "07:45"
-    elif weekday == 5:  # Saturday
-        return 6, 1.5, 0.75, 2.75, "08:15"
-    elif weekday == 6:  # Sunday
+    # 🔹 Special hard-coded West agents (Egypt schedule on Fridays)
+    egypt_west_agents = {"w atef", "w duha", "w fadi", "w mahmoud", "w ragb"}
+
+    # 🟢 Egypt override: Friday acts like Thursday
+    if (office == "Egypt" and weekday == 4) or \
+       (weekday == 4 and isinstance(agent_name, str) and agent_name.lower() in egypt_west_agents):
+        weekday = 3  
+
+    # Mon–Thu
+    if weekday in [0, 1, 2, 3]:
+        wrap_limit = 1.75 if is_commercial else 1.0
+        return 9.5, 2.333, wrap_limit, 4.5, "07:45"
+
+    # Friday
+    elif weekday == 4:
+        wrap_limit = 1.5 if is_commercial else 0.75
+        return 7.5, 2.0, wrap_limit, 3.5, "07:45"
+
+    # Saturday
+    elif weekday == 5:
+        wrap_limit = 0.75
+        return 6, 1, wrap_limit, 2.75, "08:15"
+
+    # Sunday
+    elif weekday == 6:
         return 5.0, 1.0, 0.75, None, "09:00"
-
-
-
 
 
 
@@ -599,6 +616,7 @@ def insert_total_rows(df, report_date):
             mismatch_sum = total_row.get("_MismatchAmount", 0)
             total_row["Time Mismatch"] = format_mismatch(mismatch_sum)
 
+            agent = total_row.get("Agent")  # 🔹 make agent visible for inspect.stack()
             ttg, adjusted = calculate_ttg_value(
                 total_row.get("Time Connected", 0),
                 total_row.get("Break", 0),
@@ -738,7 +756,13 @@ def detect_inconsistencies(df):
 
 
 def classify_office(agent_name):
+    commercial_agents = {
+        "sp tony", "sp allan", "sp chris", "sp jennifer", "sp mathew", "sp steve"
+    }
+
     if isinstance(agent_name, str):
+        if agent_name.lower() in commercial_agents:
+            return "Commercial"
         if agent_name.startswith("n "): return "Tepic"
         if agent_name.startswith("a "): return "Army"
         if agent_name.startswith("w "): return "West"
@@ -747,7 +771,6 @@ def classify_office(agent_name):
         if agent_name.startswith("s "): return "Spanish"
         if agent_name.startswith("g "): return "Pakistan"
     return "Other"
-
 
 
 
@@ -803,15 +826,27 @@ def load_and_process_data(uploaded_dfs, report_date):
             # 1) Load & rename chase columns
             df = load_chase_data(df)
             df["Report Date"] = report_date.strftime("%Y-%m-%d")
+            
+            # — Normalize Chase “1st Call” to local ReadyMode format —
+            #    • Parse “21/07/2025 9:42:34”
+            #    • Subtract 2 hours
+            #    • Reformat to e.g. “Jul 21 7:42AM”
+            df["1st Call"] = (
+                pd.to_datetime(df["1st Call"], dayfirst=True, errors="coerce")
+                  .sub(pd.Timedelta(hours=2))
+                  .dt.strftime("%b %d %I:%M%p")
+                  .str.replace(r"^0", "", regex=True)  # drop leading zero in hour
+            )
 
             # 2) Convert all time columns into decimal hours
             for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
                 if col in df.columns:
                     df[col] = df[col].apply(time_string_to_decimal)
 
-            # 3) Compute Time To Goal (TTG) for Chase rows
-            goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
+            # 3) Compute Time To Goal (TTG) for Chase rows            
             def calculate_ttgs_chase(row):
+                agent = row.get("Agent")  # ensures agent is visible
+                goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
                 tc = row.get("Time Connected", 0)
                 br = row.get("Break", 0)
                 wr = row.get("Wrap Up", 0)
@@ -858,12 +893,13 @@ def load_and_process_data(uploaded_dfs, report_date):
         # Flag time mismatches between shift and reported time
         df = detect_inconsistencies(df)
 
-        # Load required values for Time To Goal logic
-        goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
+     
 
 
         # Time To Goal (TTG) calculation per row
         def calculate_ttgs(row):
+            agent = row.get("Agent")  # 🔹 inject agent into local scope for inspect.stack()
+            goal_time, break_limit, wrap_limit, _, _ = get_daily_time_goals(report_date)
             tc = row.get("Time Connected", 0)
             br = row.get("Break", 0)
             wr = row.get("Wrap Up", 0)
@@ -1013,14 +1049,36 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
     html_blocks = []
 
-    # Add header + goal paragraph using any row
-    sample_row = next(iter(grouped_data.values()))[["Report Date"]].iloc[0]
+    # 🔍 Try to find a non-total agent row; fallback to any row if needed
+    sample_row = None
+    for df in grouped_data.values():
+        for _, row in df.iterrows():
+            if not row.get("is_total", False):
+                sample_row = row
+                break
+        if sample_row is not None:
+            break
+
+    # 🔁 If no non-total found, fallback to just any row
+    if sample_row is None:
+        for df in grouped_data.values():
+            if not df.empty:
+                sample_row = df.iloc[0]
+                break
+
+    # 🚨 Final guard
+    if sample_row is None:
+        raise ValueError("❌ No rows found at all to generate goal summary for PDF.")
+
     report_date = pd.to_datetime(sample_row["Report Date"])
+    agent_name = sample_row["Agent"]
     goal_time, break_limit, wrap_limit, talk_goal, _ = get_daily_time_goals(report_date)
-    goal_time = decimal_to_hhmmss_nosign(goal_time)
+    goal_time   = decimal_to_hhmmss_nosign(goal_time)
     break_limit = decimal_to_hhmmss_nosign(break_limit)
-    wrap_limit = decimal_to_hhmmss_nosign(wrap_limit)
-    talk_goal = decimal_to_hhmmss_nosign(talk_goal)
+    wrap_limit  = decimal_to_hhmmss_nosign(wrap_limit)
+    talk_goal   = decimal_to_hhmmss_nosign(talk_goal)
+
+
 
 
 
@@ -1140,12 +1198,13 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
             if is_total:
                 agent_label = f"{agent} (Total)"
+            elif server_label == "Chase":
+                agent_label = f"{agent} (Chase)"
+            elif server_label.startswith("Server") and server_label[-1].isdigit():
+                agent_label = f"{agent} on {server_label}"
             else:
-                if server_label.startswith("Server") and server_label[-1].isdigit():
-                    server_number = server_label[-1]
-                else:
-                    server_number = "?"
-                agent_label = f"{agent} on Server {server_number}"
+                agent_label = f"{agent} on {server_label}"
+
 
             # Chart image path
             chart_filename = f"{agent.replace(' ', '_')}_{row.name}.png"
@@ -1228,88 +1287,6 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
 
 
 
-
-## === VISUALIZATION HELPERS (PDF/Charts) ===
-def build_agent_html_section(row, chart_path):
-    report_date = pd.to_datetime(row["Report Date"])
-    goal_time, break_limit, wrap_limit, talk_time_goal, shift_start = get_daily_time_goals(report_date)
-
-    def format_time(val):
-        return decimal_to_hhmmss_nosign(val) if pd.notna(val) else "--:--:--"
-
-    def format_time_signed(val):
-        return decimal_to_hhmmss(val) if pd.notna(val) else "--:--:--"
-
-    # === Time To Goal display (signed format always shown) ===
-    time_to_goal_display = format_time_signed(row.get("Time To Goal", None))
-
-    # === Clock-in analysis ===
-    first_call_str = str(row.get("1st Call", ""))
-    try:
-        call_dt = pd.to_datetime(first_call_str + f" {report_date.year}")
-        shift_time_obj = datetime.strptime(shift_start, "%H:%M").time()
-        shift_dt = call_dt.replace(hour=shift_time_obj.hour, minute=shift_time_obj.minute, second=0)
-
-        delta_minutes = (call_dt - shift_dt).total_seconds() / 60
-        minutes_abs = abs(int(delta_minutes))
-        direction = "early" if delta_minutes < 0 else "late"
-
-        hours = minutes_abs // 60
-        minutes = minutes_abs % 60
-        readable_delay = f"{hours}h {minutes}m" if hours > 0 else f"{minutes} min"
-
-        if delta_minutes <= 0:
-            status_label = "On time"
-            status_color = "#00aa00"
-        elif delta_minutes <= 5:
-            status_label = "Just made it"
-            status_color = "#FFD700"
-        else:
-            status_label = "Late"
-            status_color = "#cc0000"
-
-        inline_status = f"<span style='color:{status_color}; font-weight:bold'>{status_label} ({readable_delay} {direction})</span>"
-
-    except Exception:
-        inline_status = "<span style='color:#000000; font-weight:bold'>Clock-in unknown</span>"
-
-    # 🔵 Label logic: human-readable agent_label (Total / Chase / Server N / fallback)
-    agent = row["Agent"]
-    is_total = row.get("is_total") is True
-    server_label = row.get("Server", "")
-    if is_total:
-        agent_label = f"{agent} (Total)"
-    elif server_label == "Chase":
-        agent_label = f"{agent} (Chase)"
-    elif server_label.startswith("Server") and server_label[-1].isdigit():
-        agent_label = f"{agent} on {server_label}"
-    else:
-        agent_label = f"{agent} on {server_label}"
-
-    # === Final HTML block ===
-    return f"""
-    <table style="width: 100%; border-spacing: 20px 10px; margin-bottom: 20px; page-break-inside: avoid;">
-        <tr>
-            <td style="vertical-align: top; width: 48%;">
-                <div style="font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: bold; color: #000000; line-height: 1.5;">
-                    <h2 style="margin: 0 0 8px 0; font-size: 18px; color: #007acc;">
-                        {agent_label} {inline_status}
-                    </h2>
-                    <p style="margin: 4px 0 12px 0;"><strong>Time To Goal:</strong> {time_to_goal_display}</p>
-                    <p style="margin: 4px 0;"><strong>Sales:</strong> {row.get('Sales', 0)}</p>
-                    <p style="margin: 4px 0;"><strong>- Time Connected Goal:</strong> {format_time(goal_time)}</p>
-                    <p style="margin: 4px 0;"><strong>- Break Limit:</strong> {format_time(break_limit)}</p>
-                    <p style="margin: 4px 0;"><strong>- Wrap-Up Limit:</strong> {format_time(wrap_limit)}</p>
-                    <p style="margin: 4px 0;"><strong>- Talk Time Goal:</strong> {format_time(talk_time_goal)}</p>
-                </div>
-            </td>
-            <td style="vertical-align: top; width: 52%;">
-                <img src="{chart_path}" style="width: 100%; border: none; border-radius: 6px;" />
-            </td>
-        </tr>
-    </table>
-    <hr style="border: none; border-top: 1px solid #ccc; margin: 30px 0;" />
-    """
 
 
 
