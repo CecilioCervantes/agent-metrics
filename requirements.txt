@@ -37,7 +37,7 @@ iniconfig==2.1.0
 Jinja2==3.1.6
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
-kaleido==0.1.0
+kaleido==1.0.0
 logistro==1.1.0
 lxml==5.4.0
 MarkupSafe==3.0.2
@@ -82,6 +82,7 @@ requests==2.32.4
 requests-oauthlib==2.0.0
 rpds-py==0.25.1
 rsa==4.9.1
+sendgrid==6.12.4
 simplejson==3.20.1
 six==1.17.0
 smmap==5.0.2
