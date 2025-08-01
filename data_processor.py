@@ -481,7 +481,7 @@ def get_daily_time_goals(report_date):
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
     # 🔹 Special hard-coded West agents (Egypt schedule on Fridays)
-    egypt_west_agents = {"w atef", "w duha", "w fadi", "w mahmoud", "w ragb"}
+    egypt_west_agents = {"w atef", "w duha", "w fadi", "w mahmoud", "w ragb", "w atya"}
 
     # 🟢 Egypt override: Friday acts like Thursday
     if (office == "Egypt" and weekday == 4) or \
