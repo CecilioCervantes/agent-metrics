@@ -873,9 +873,9 @@ with tab2:
             )
 
     # === Checkboxes to select email types ===
-    send_agents = st.checkbox("📩 Send individual agent emails", value=True)
-    send_offices = st.checkbox("🏢 Send per-office reports to managers", value=True)
-    send_company = st.checkbox("🏛️ Send full report to CEO/Directors", value=True)
+    send_agents = st.checkbox("📩 Notify flagged agents about their metrics", value=True)
+    send_offices = st.checkbox("🏢 Notify managers with a summary of underperforming agents", value=True)
+    send_company = st.checkbox("🏛️ Provide directors with a complete performance report", value=True)
 
     # === Email button ===
     if st.button("📧 Send Selected Summary Reports by Email"):
@@ -898,19 +898,21 @@ with tab2:
             try:
                 # === 1. Send agent emails ===
                 if send_agents:
-                    agent_list = df[["Agent", "Office"]].drop_duplicates().to_dict(orient="records")
                     st.markdown("### 📩 Sending agent emails...")
                     agent_progress = st.progress(0)
                     agent_status = st.empty()
 
-                    for i, agent_info in enumerate(agent_list, 1):
-                        agent_name = agent_info["Agent"]
-                        office = agent_info["Office"]
-                        filename = f"{agent_name.replace(' ', '_')}_{row.name}.png"
+                    df_unique = df[["Agent", "Office"]].drop_duplicates()
+
+                    agent_success = []
+                    for i, (idx, row) in enumerate(df_unique.iterrows(), 1):
+                        agent_name = row["Agent"]
+                        office = row["Office"]
+                        filename = f"{agent_name.replace(' ', '')}{idx}.png"
                         pdf_path = os.path.join("exported_pdfs", filename)
 
                         if not os.path.exists(pdf_path):
-                            agent_status.warning(f"⚠️ Missing PDF for {agent_name} (pdf_path)")
+                            agent_status.warning(f"⚠️ Missing PDF for {agent_name} ({pdf_path})")
                             continue
 
                         result = send_agent_email(agent_name, office, pdf_path, date_str)
@@ -919,8 +921,8 @@ with tab2:
                         else:
                             agent_status.warning(f"❌ Failed to email {agent_name} ({result})")
 
-                        agent_progress.progress(i / len(agent_list))
-                        agent_status.text(f"{i}/{len(agent_list)} agent emails processed...")
+                        agent_progress.progress(i / len(df_unique))
+                        agent_status.text(f"{i}/{len(df_unique)} agent emails processed...")
 
                 # === 2. Send office emails ===
                 if send_offices:
