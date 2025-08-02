@@ -506,7 +506,7 @@ def get_daily_time_goals(report_date):
     # Saturday
     elif weekday == 5:
         wrap_limit = 0.75
-        return 6, 1, wrap_limit, 2.75, "08:15"
+        return 6, 1, wrap_limit, 2.75, "07:15"
 
     # Sunday
     elif weekday == 6:
