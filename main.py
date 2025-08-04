@@ -153,6 +153,7 @@ for key, default in {
     "raw_data": None,
     "uploaded_files": None,
     "pdf_paths": {},  # ← store generated PDFs here
+    "agent_to_pdfs": {},
     "pdf_ready": False,  # NEW: control when to auto-generate
     "pdf_ready_next_cycle": False  # NEW: one-cycle delay buffer
 }.items():
@@ -308,6 +309,7 @@ if files:
         st.session_state["pdf_ready_next_cycle"] = True
         st.session_state.dropbox_file_names = [name for name, _ in files]
         st.session_state["pdf_paths"] = {}  # Clear old PDFs
+        st.session_state["agent_to_pdfs"] = {}
         
 
 
@@ -396,10 +398,12 @@ with st.sidebar:
             
             )
             st.session_state["pdf_paths"] = {}  # Clear old PDFs
+            st.session_state["agent_to_pdfs"] = {}
 
 
             st.success("✅ Data processed successfully!")
             st.session_state["pdf_paths"] = {}
+            st.session_state["agent_to_pdfs"] = {}
             st.session_state["pdf_ready_next_cycle"] = True
 
 
@@ -774,6 +778,7 @@ def generate_all_reports(df, report_date):
 
     # Reset PDF cache
     st.session_state["pdf_paths"] = {}
+    st.session_state["agent_to_pdfs"] = {}
 
     with tempfile.TemporaryDirectory() as tmpdir:
         st.session_state["export_mode"] = True
@@ -809,10 +814,14 @@ def generate_all_reports(df, report_date):
                 pio.write_image(fig, chart_path, format="png", scale=0.5)
 
                 # Per-agent PDF
-                pdf_filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+                pdf_filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.pdf"
                 pdf_path = os.path.join(OUTPUT_DIR, pdf_filename)
                 agent_df = office_df.loc[[row.name]]
                 export_html_pdf({office: agent_df}, pdf_path, chart_folder=tmpdir)
+                if row['Agent'] in st.session_state["agent_to_pdfs"]:
+                    st.session_state["agent_to_pdfs"][row['Agent']].append(pdf_path)
+                else:
+                    st.session_state["agent_to_pdfs"][row['Agent']] = [pdf_path]
 
         # Full company PDF
         full_pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
@@ -926,6 +935,8 @@ with tab2:
             df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
             report_date = pd.to_datetime(df["Report Date"].iloc[0])
             date_str = report_date.strftime("%B %d, %Y")
+            # Limit to 3 agents for debugging
+            df = df.iloc[:3]
 
             # Always regenerate PDFs for safety (ensures all agents included)
             with st.spinner("🛠️ Generating flagged reports (charts + PDFs)..."):
@@ -941,10 +952,12 @@ with tab2:
             try:
                 # === 1. Send agent emails ===
                 if send_agents:
+                    agent_list = flagged_df[["Agent", "Office"]].drop_duplicates().to_dict(orient="records")
                     st.markdown("### 📩 Sending agent emails...")
                     agent_progress = st.progress(0)
                     agent_status = st.empty()
 
+                    '''
                     # Use only flagged agents
                     flagged_agents = flagged_df[["Agent", "Office"]].drop_duplicates()
                     agent_success = []
@@ -959,21 +972,28 @@ with tab2:
 
                         if not pdf_path or not os.path.exists(pdf_path):
                             agent_status.warning(f"⚠️ Missing PDF for {agent_name}")
+                    '''
+
+                    for i, agent_info in enumerate(agent_list, 1):
+                        agent_name = agent_info["Agent"]
+                        office = agent_info["Office"]
+                        pdf_paths = st.session_state["agent_to_pdfs"].get(agent_name, [])
+
+                        if not pdf_paths or any(not os.path.exists(pdf_path) for pdf_path in pdf_paths):
+                            agent_status.warning(f"⚠️ Missing PDF for {agent_name} (pdf_path)")
                             continue
 
-                        result = send_agent_email(agent_name, office, pdf_path, date_str)
+                        result = send_agent_email(agent_name, office, pdf_paths, date_str)
                         if result == 202:
                             agent_success.append(agent_name)
                             agent_status.success(f"✅ Sent to {agent_name}")
                         else:
                             agent_status.warning(f"❌ Failed for {agent_name}: {result}")
 
-                        agent_progress.progress(i / len(flagged_agents))
-                        agent_status.text(f"{i}/{len(flagged_agents)} flagged agent emails processed...")
+                        agent_progress.progress(i / len(agent_list))
+                        agent_status.text(f"{i}/{len(agent_list)} flagged agent emails processed...")
 
                     st.success(f"✅ Agent emails sent: {len(agent_success)}")
-
-
 
                 # === 2. Send office emails ===
                 if send_offices:

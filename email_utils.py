@@ -40,7 +40,7 @@ SENDER_NAME = "MSL Analytics Dashboard"
 
 AGENT_DOMAIN = "marketingstormleads.com"
 
-def send_email(subject, html_content, to_list, cc_list=None, file_path=None):
+def send_email(subject, html_content, to_list, cc_list=None, file_paths=None):
     message = Mail(
         from_email=Email(SENDER_EMAIL, name=SENDER_NAME),
         to_emails=[To(email) for email in to_list],
@@ -51,30 +51,35 @@ def send_email(subject, html_content, to_list, cc_list=None, file_path=None):
     if cc_list:
         message.cc = [Cc(email) for email in cc_list]
 
-    if file_path and os.path.exists(file_path):
-        max_size_bytes = 7 * 1024 * 1024  # 7MB
-        original_size = os.path.getsize(file_path)
+    # Support multiple attachments
+    if file_paths:
+        for file_path in file_paths:
+            if not os.path.exists(file_path):
+                continue
 
-        # Determine if we need to zip the file
-        if original_size > max_size_bytes:
-            zip_path = file_path.replace(".pdf", ".zip")
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                zipf.write(file_path, arcname=os.path.basename(file_path))
-            file_path = zip_path
-            mime_type = "application/zip"
-        else:
-            mime_type, _ = mimetypes.guess_type(file_path)
-            mime_type = mime_type or "application/octet-stream"
+            max_size_bytes = 7 * 1024 * 1024  # 7MB
+            original_size = os.path.getsize(file_path)
 
-        with open(file_path, "rb") as f:
-            encoded_file = base64.b64encode(f.read()).decode()
-            attachment = Attachment(
-                FileContent(encoded_file),
-                FileName(os.path.basename(file_path)),
-                FileType(mime_type),
-                Disposition("attachment")
-            )
-            message.attachment = attachment
+            # Determine if we need to zip the file
+            if original_size > max_size_bytes:
+                zip_path = file_path + ".zip"
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                    zipf.write(file_path, arcname=os.path.basename(file_path))
+                file_path = zip_path
+                mime_type = "application/zip"
+            else:
+                mime_type, _ = mimetypes.guess_type(file_path)
+                mime_type = mime_type or "application/octet-stream"
+
+            with open(file_path, "rb") as f:
+                encoded_file = base64.b64encode(f.read()).decode()
+                attachment = Attachment(
+                    FileContent(encoded_file),
+                    FileName(os.path.basename(file_path)),
+                    FileType(mime_type),
+                    Disposition("attachment")
+                )
+                message.add_attachment(attachment)
 
     try:
         sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
@@ -83,22 +88,21 @@ def send_email(subject, html_content, to_list, cc_list=None, file_path=None):
     except Exception as e:
         return f"Error: {e}"
 
-def send_agent_email(agent_name, office, pdf_path, date_str):
-    print(f"Sending email for agent: {agent_name}, office: {office}, date: {date_str}")
-    if agent_name != "n aldana":
-        return "Invalid agent name"
-    if not os.path.exists(pdf_path):
-        return "File not found"
+def send_agent_email(agent_name, office, file_paths, date_str):
+    # Check that all files exist
+    missing = [fp for fp in file_paths if not os.path.exists(fp)]
+    if missing:
+        return f"File(s) not found: {missing}"
 
     if agent_name in CHANGED_OFFICE_AGENTS:
         agent_name = CHANGED_OFFICE_AGENTS[agent_name]
     else:
         agent_email = f"{agent_name}@{AGENT_DOMAIN}"
     
+    # Hardcoded for testing — you can remove if not needed
     agent_email = "ceciliocervantes@gmail.com"
 
-    manager_email = OFFICE_MANAGER_EMAILS.get(office)
-    manager_email = "ncecilio@marketingstormleads.com"
+    manager_email = OFFICE_MANAGER_EMAILS.get(office, "ncecilio@marketingstormleads.com")
     if not manager_email:
         raise ValueError(f"No manager email found for office: {office}")
 
@@ -110,9 +114,9 @@ def send_agent_email(agent_name, office, pdf_path, date_str):
     """
     to_list = [agent_email]
     cc_list = [manager_email] + DEV_TEAM
-    return send_email(subject, html_body, to_list, cc_list, pdf_path)
+    return send_email(subject, html_body, to_list, cc_list, file_paths)
 
-def send_office_email(office, pdf_path, date_str):
+def send_office_email(office, file_paths, date_str):
     manager_email = OFFICE_MANAGER_EMAILS.get(office)
     if not manager_email:
         raise ValueError(f"No manager email found for office: {office}")
@@ -125,9 +129,9 @@ def send_office_email(office, pdf_path, date_str):
     """
     to_list = [manager_email]
     cc_list = DEV_TEAM
-    return send_email(subject, html_body, to_list, cc_list, pdf_path)
+    return send_email(subject, html_body, to_list, cc_list, file_paths)
 
-def send_full_company_email(pdf_path, date_str):
+def send_full_company_email(pdf_paths, date_str):
     subject = f"[Global Report] All Offices – {date_str}"
     html_body = f"""
         <p>Hi all,</p>
@@ -136,5 +140,5 @@ def send_full_company_email(pdf_path, date_str):
     """
     to_list = CEO_AND_DIRECTORS
     cc_list = DEV_TEAM
-    return send_email(subject, html_body, to_list, cc_list, pdf_path)
+    return send_email(subject, html_body, to_list, cc_list, pdf_paths)
 
