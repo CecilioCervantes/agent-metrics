@@ -1014,7 +1014,7 @@ with tab2:
                             office_status.warning(f"⚠️ Missing PDF for {office}")
                             continue
 
-                        result = send_office_email(office, path, date_str)
+                        result = send_office_email(office, [path], date_str)
                         if result == 202:
                             office_success.append(office)
                             office_status.success(f"✅ Sent office report for {office}")
@@ -1032,7 +1032,7 @@ with tab2:
                     st.markdown("### 🏛️ Sending full company report...")
                     full_path = st.session_state["pdf_paths"].get("full")
                     if full_path and os.path.exists(full_path):
-                        result = send_full_company_email(full_path, date_str)
+                        result = send_full_company_email([full_path], date_str)
                         if result == 202:
                             global_success = True
                             st.success("✅ Company-wide report sent successfully")
