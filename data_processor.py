@@ -481,7 +481,7 @@ def get_daily_time_goals(report_date):
     weekday = report_date.weekday()  # Monday = 0, Sunday = 6
 
     # 🔹 Special hard-coded West agents (Egypt schedule on Fridays)
-    egypt_west_agents = {"w atef", "w duha", "w fadi", "w mahmoud", "w ragb"}
+    egypt_west_agents = {"w atef", "w duha", "w fadi", "w mahmoud", "w ragb", "w atya"}
 
     # 🟢 Egypt override: Friday acts like Thursday
     if (office == "Egypt" and weekday == 4) or \
@@ -506,7 +506,7 @@ def get_daily_time_goals(report_date):
     # Saturday
     elif weekday == 5:
         wrap_limit = 0.75
-        return 6, 1, wrap_limit, 2.75, "08:15"
+        return 6, 1, wrap_limit, 2.75, "07:15"
 
     # Sunday
     elif weekday == 6:
@@ -589,15 +589,7 @@ def insert_total_rows(df, report_date):
             result.append(row.to_dict())
 
         if len(group) > 1:
-            print(f"🧪 GROUPED AGENT: {agent}")
-            print(group[["Agent", "Sales", "Break", "Wrap Up", "Talk Time", "Time Connected"]])
 
-            print(f"➡️ Creating TOTAL row for: {agent}")
-            print("RAW SALES:", group["Sales"].tolist())
-            print("RAW BREAK:", group["Break"].tolist())
-            print("RAW WRAP:", group["Wrap Up"].tolist())
-            print("RAW TALK:", group["Talk Time"].tolist())
-            print("RAW TC:", group["Time Connected"].tolist())
 
             total_row = group.iloc[-1].copy()
 
@@ -634,9 +626,7 @@ def insert_total_rows(df, report_date):
             )
 
 
-            print(f"🧪 GROUPED AGENT: {agent}")
-            print(group[["Agent", "Sales", "Break", "Wrap Up", "Talk Time", "Time Connected"]])
-
+ 
             total_row["Time To Goal"] = ttg
             total_row["_TTG_Adjusted"] = adjusted
             total_row["is_total"] = True
@@ -1166,9 +1156,7 @@ def export_html_pdf(grouped_data, output_path, chart_folder):
         """)
 
 
-        print(f"📤 EXPORTING {office} — {len(office_df)} agents")
-        print(office_df[["Agent", "Sales", "Time Connected", "Break", "Wrap Up"]])
-
+ 
 
         for _, row in office_df.iterrows():
             ttg_val = row.get("Time To Goal", None)
@@ -1498,3 +1486,236 @@ def build_progress_figure(row, unique_key_suffix=None, color_override=None):
     )
 
     return fig, goals
+
+
+
+
+
+def get_flagged_agents(df, report_date):
+    """
+    Flags agents with bad metrics based on shift progress.
+    Keeps total row if available, otherwise falls back to per-server rows.
+    Returns agent name, flagged=True, with clear human-readable reasons.
+    """
+
+    from datetime import datetime
+    from data_processor import insert_total_rows, decimal_to_hhmmss_nosign
+
+    # Insert total rows
+    rep_date = pd.to_datetime(df["Report Date"].iloc[0])
+    df = insert_total_rows(df, rep_date)
+
+    # Keep one row per agent: prefer total row if available
+    if "is_total" in df.columns:
+        df = df.sort_values("is_total", ascending=False).drop_duplicates(subset="Agent", keep="first")
+
+    # Pull daily goals
+    goal_time, break_limit, wrap_limit, talk_goal, shift_start = get_daily_time_goals(report_date)
+    shift_length_hours = goal_time
+
+    # Shift start as datetime
+    shift_start_dt = datetime.combine(report_date.date(), datetime.strptime(shift_start, "%H:%M").time())
+
+    # Elapsed time
+    elapsed = (report_date - shift_start_dt).total_seconds()
+    elapsed_hours = elapsed / 3600
+    elapsed_str = decimal_to_hhmmss_nosign(elapsed_hours)
+
+    # Expectations
+    total = shift_length_hours * 3600
+    progress = max(0, min(elapsed / total, 1))
+    adj_goal_time   = goal_time   * progress
+    adj_break_limit = break_limit * progress
+    adj_wrap_limit  = wrap_limit  * progress
+    adj_talk_goal   = talk_goal   * progress if talk_goal is not None else None
+
+    # Helper
+    def fmt(val):
+        return decimal_to_hhmmss_nosign(val)
+
+    # Debug info
+    print(f"\nDEBUG INFO at {report_date}")
+    print(f"Shift start: {shift_start_dt}")
+    print(f"Shift length goal: {shift_length_hours}h")
+    print(f"Elapsed since shift start: {elapsed_str}")
+    print(f"Shift progress: {progress*100:.1f}%")
+    print(f"Adjusted Time Connected Goal: {decimal_to_hhmmss_nosign(adj_goal_time*0.9)}")
+    print(f"Adjusted Break Limit: {decimal_to_hhmmss_nosign(adj_break_limit*1.2)}")
+    print(f"Adjusted Wrap Limit: {decimal_to_hhmmss_nosign(adj_wrap_limit*1.2)}")
+
+    # Build reasons row-by-row
+    reasons_list = []
+    for _, row in df.iterrows():
+        reasons = []
+
+        if row["Time Connected"] < adj_goal_time * 0.9:
+            reasons.append(
+                f"{elapsed_str} into shift, short on time connected — has {fmt(row['Time Connected'])} "
+                f"when expected is at least {fmt(adj_goal_time*0.9)}"
+            )
+
+        if row["Break"] > adj_break_limit * 1.2:
+            reasons.append(
+                f"{elapsed_str} into shift, high break time — took {fmt(row['Break'])} "
+                f"(limit is {fmt(adj_break_limit*1.2)})"
+            )
+
+        if row["Wrap Up"] > adj_wrap_limit * 1.2:
+            reasons.append(
+                f"{elapsed_str} into shift, high wrap-up time — used {fmt(row['Wrap Up'])} "
+                f"(limit is {fmt(adj_wrap_limit*1.2)})"
+            )
+
+        if (elapsed > 300) and (row["Time Connected"] < 0.1):
+            reasons.append(
+                f"{elapsed_str} into shift, flagged for late login — very little time connected"
+            )
+
+        reasons_list.append("\n".join(reasons) if reasons else None)
+
+    # Attach reasons
+    df["Reasons"] = reasons_list
+    flagged = df[df["Reasons"].notna()].copy()
+    flagged["Flagged"] = True
+
+    return flagged
+
+
+def generate_flagged_reports(flagged_df, report_date):
+    import os
+    OUTPUT_DIR = "flagged_reports"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    date_str = report_date.strftime("%B %d, %Y")
+
+    results = {}
+
+    # --- Individual PDFs ---
+    html_template = """<html>
+        <head>
+        <style>
+            @page {{ size: A4; margin: 0.5in; }}
+            body {{ font-family: Helvetica, Arial, sans-serif; color: #222; font-size: 14px; }}
+            h1, h2, h3, p {{ margin: 0; padding: 0; }}
+        </style>
+        </head>
+        <body>
+            {content}
+        </body>
+        </html>"""
+
+    for _, row in flagged_df.iterrows():
+        agent_name = row["Agent"]
+        office = row["Office"]
+        reasons = row["Reasons"].split("\n") if row["Reasons"] else []
+
+        chart_path = os.path.join(OUTPUT_DIR, f"{agent_name}_chart.png")
+        if not os.path.exists(chart_path):
+            fig = build_export_figure(row)
+            fig.write_image(chart_path)
+
+        content = f"""
+            <div style="color:#D62739; text-align:center;">
+                <h1 style="font-size:28px; font-weight:bold;">PERFORMANCE ALERT</h1>
+            </div>
+            <div style="text-align:center; margin:12px auto;">
+                <p style="font-size:20px; font-weight:bold; color:#222; margin:0;">
+                    Agent: {agent_name} | Office: {office} | Date: {date_str}
+                </p>
+                <ul style="font-size:20px; color:red; line-height:1.4; margin:0; padding-left:18px;">
+                    {''.join([f'<li>{reason}</li>' for reason in reasons])}
+                </ul>
+            </div>
+            <div style="margin:12px auto; width:90%; padding:12px;">
+                <h3 style="font-size:20px; color:#6EAF26; text-align:center; margin-bottom:8px;">
+                    This is your opportunity to get back on track
+                </h3>
+                <p style="font-size:15px; line-height:1.4; text-align:justify;">
+                    Your metrics are slipping, but this is your chance to flip the script. Good metrics aren’t just numbers —
+                    they’re the key to winning in our pursuit of success. Every minute on the phones matters, and you’ve still got time to make it count.
+                    Stay logged in, keep breaks short, and cut down wrap-up time. Lock in now, and you can finish your shift strong and prove what you’re capable of.
+                </p>
+            </div>
+            <div style="text-align:center; margin:15px auto; width:90%;">
+                <h3 style="font-size:18px; color:#333; margin-top:20px; font-weight:bold;">Your Current Metrics</h3>
+                <img src="{os.path.abspath(chart_path)}" style="width:95%; max-height:400px; border:1px solid #ccc; border-radius:6px; background:#fff; padding:5px;">
+            </div>
+            <div style="margin:40px auto; width:90%; text-align:center;">
+                <p style="font-size:18px; font-weight:bold; color:red;">
+                    Send a quick message to your manager to catch up on your metrics. Stay focused and finish strong!
+                </p>
+            </div>
+        """
+
+        html_content = html_template.format(content=content)
+        pdf_path = os.path.join(OUTPUT_DIR, f"{agent_name}_Flagged_{date_str}.pdf")
+        html_to_pdf(html_content, pdf_path)
+        results[f"{agent_name}_pdf"] = pdf_path
+
+    # --- Per-office PDFs ---
+    for office, office_df in flagged_df.groupby("Office"):
+        office_pages = ""
+        for _, row in office_df.iterrows():
+            agent_name = row["Agent"]
+            reasons = row["Reasons"].split("\n") if row["Reasons"] else []
+
+            chart_path = os.path.join(OUTPUT_DIR, f"{agent_name}_chart.png")
+            if not os.path.exists(chart_path):
+                fig = build_export_figure(row)
+                fig.write_image(chart_path)
+
+            # reuse the same content block
+            office_pages += html_template.format(content=f"""
+                <div style="page-break-after: always;">
+                    <div style="color:#D62739; text-align:center;">
+                        <h1 style="font-size:28px; font-weight:bold;">PERFORMANCE ALERT</h1>
+                    </div>
+                    <div style="text-align:center; margin:12px auto;">
+                        <p style="font-size:20px; font-weight:bold; color:#222; margin:0;">
+                            Agent: {agent_name} | Office: {office} | Date: {date_str}
+                        </p>
+                        <ul style="font-size:20px; color:red; line-height:1.4; margin:0; padding-left:18px;">
+                            {''.join([f'<li>{reason}</li>' for reason in reasons])}
+                        </ul>
+                    </div>
+                    <div style="margin:12px auto; width:90%; padding:12px;">
+                        <h3 style="font-size:20px; color:#6EAF26; text-align:center; margin-bottom:8px;">
+                            This is your opportunity to get back on track
+                        </h3>
+                        <p style="font-size:15px; line-height:1.4; text-align:justify;">
+                            Your metrics are slipping, but this is your chance to flip the script. Good metrics aren’t just numbers —
+                            they’re the key to winning in our pursuit of success. Every minute on the phones matters, and you’ve still got time to make it count.
+                            Stay logged in, keep breaks short, and cut down wrap-up time. Lock in now, and you can finish your shift strong and prove what you’re capable of.
+                        </p>
+                    </div>
+                    <div style="text-align:center; margin:15px auto; width:90%;">
+                        <h3 style="font-size:18px; color:#333; margin-top:20px; font-weight:bold;">Your Current Metrics</h3>
+                        <img src="{os.path.abspath(chart_path)}" style="width:95%; max-height:400px; border:1px solid #ccc; border-radius:6px; background:#fff; padding:5px;">
+                    </div>
+                    <div style="margin:40px auto; width:90%; text-align:center;">
+                        <p style="font-size:18px; font-weight:bold; color:red;">
+                            Send a quick message to your manager to catch up on your metrics. Stay focused and finish strong!
+                        </p>
+                    </div>
+                </div>
+            """)
+
+        office_html = f"<html><body>{office_pages}</body></html>"
+        office_pdf_path = os.path.join(OUTPUT_DIR, f"{office}_Flagged_{date_str}.pdf")
+        html_to_pdf(office_html, office_pdf_path)
+        results[f"{office}_pdf"] = office_pdf_path
+
+    print(f"✅ Flagged reports generated in {OUTPUT_DIR}")
+    if "pdf_paths" not in st.session_state:
+        st.session_state["pdf_paths"] = {}
+    st.session_state["pdf_paths"]["flagged"] = results
+    return results
+
+
+
+
+
+
+def html_to_pdf(html_content, pdf_path):
+    """Convert raw HTML string into a PDF file."""
+    with open(pdf_path, "wb") as f:
+        pisa.CreatePDF(src=html_content, dest=f)

@@ -100,7 +100,9 @@ from data_processor import (
     insert_total_rows,
     connect_to_gsheet,
     create_unique_worksheet,
-    export_df_to_sheet
+    export_df_to_sheet,
+    get_flagged_agents,
+    generate_flagged_reports
 )
 
 # === EMAIL UTILITIES ===
@@ -704,6 +706,19 @@ with tab1:
         df = pd.DataFrame()
 
     if not df.empty:
+        # === Flag agents with bad metrics (console log) ===
+        from datetime import datetime
+        flagged_df = get_flagged_agents(df.copy(), datetime.now())
+
+        if flagged_df.empty:
+            print("✅ No agents flagged. Everyone is on track!")
+        else:
+            print("\n🚨 Flagged Agents:")
+            for _, row in flagged_df.iterrows():
+                print(f"- {row['Agent']}: {row['Reasons']}")
+                
+
+
         # Group data by Office name
         offices = df["Office"].dropna().unique()
 
@@ -850,6 +865,29 @@ with tab2:
         report_date = pd.to_datetime(df["Report Date"].iloc[0])
         generate_all_reports(df, report_date)
 
+    if st.button("📤 Export Flagged Agents to PDF"):
+        if flagged_df.empty:
+            st.warning("✅ No flagged agents to export.")
+        else:
+            st.info("📦 Generating PDF with flagged agents only...")
+
+            report_date = pd.to_datetime(flagged_df["Report Date"].iloc[0])
+            generate_flagged_reports(flagged_df, report_date)
+            st.success("✅ PDF with flagged agents generated!")
+
+    if st.session_state.get("pdf_paths", {}).get("flagged"):
+        st.markdown("### 📥 Download Flagged Reports")
+        for name, path in st.session_state["pdf_paths"]["flagged"].items():
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    st.download_button(
+                        label=f"📄 {os.path.basename(path)}",
+                        data=f.read(),
+                        file_name=os.path.basename(path),
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+
     # === Download Buttons ===
     if st.session_state.get("pdf_paths", {}).get("full"):
         with open(st.session_state["pdf_paths"]["full"], "rb") as f:
@@ -873,9 +911,9 @@ with tab2:
             )
 
     # === Checkboxes to select email types ===
-    send_agents = st.checkbox("📩 Send individual agent emails", value=True)
-    send_offices = st.checkbox("🏢 Send per-office reports to managers", value=True)
-    send_company = st.checkbox("🏛️ Send full report to CEO/Directors", value=True)
+    send_agents = st.checkbox("📩 Notify flagged agents about their metrics", value=True)
+    send_offices = st.checkbox("🏢 Notify managers with a summary of underperforming agents", value=True)
+    send_company = st.checkbox("🏛️ Provide directors with a complete performance report", value=True)
 
     # === Email button ===
     if st.button("📧 Send Selected Summary Reports by Email"):
@@ -890,59 +928,84 @@ with tab2:
             date_str = report_date.strftime("%B %d, %Y")
 
             # Always regenerate PDFs for safety (ensures all agents included)
-            with st.spinner("🛠️ Generating reports (charts + PDFs)..."):
-                generate_all_reports(df, report_date)
+            with st.spinner("🛠️ Generating flagged reports (charts + PDFs)..."):
+                flagged_df = get_flagged_agents(df.copy(), report_date)
+                if flagged_df.empty:
+                    st.warning("✅ No flagged agents to email.")
+                    st.stop()
+                generate_flagged_reports(flagged_df, report_date)
+
 
             agent_success, office_success, global_success = [], [], None
 
             try:
                 # === 1. Send agent emails ===
                 if send_agents:
-                    agent_list = df[["Agent", "Office"]].drop_duplicates().to_dict(orient="records")
                     st.markdown("### 📩 Sending agent emails...")
                     agent_progress = st.progress(0)
                     agent_status = st.empty()
 
-                    for i, agent_info in enumerate(agent_list, 1):
-                        agent_name = agent_info["Agent"]
-                        office = agent_info["Office"]
-                        filename = f"{agent_name.replace(' ', '_')}_{row.name}.png"
-                        pdf_path = os.path.join("exported_pdfs", filename)
+                    # Use only flagged agents
+                    flagged_agents = flagged_df[["Agent", "Office"]].drop_duplicates()
+                    agent_success = []
 
-                        if not os.path.exists(pdf_path):
-                            agent_status.warning(f"⚠️ Missing PDF for {agent_name} (pdf_path)")
+                    for i, (_, row) in enumerate(flagged_agents.iterrows(), 1):
+                        agent_name = row["Agent"]
+                        office = row["Office"]
+
+                        # Get the PDF path from session_state (set by generate_flagged_reports)
+                        pdf_key = f"{agent_name}_pdf"
+                        pdf_path = st.session_state["pdf_paths"]["flagged"].get(pdf_key)
+
+                        if not pdf_path or not os.path.exists(pdf_path):
+                            agent_status.warning(f"⚠️ Missing PDF for {agent_name}")
                             continue
 
                         result = send_agent_email(agent_name, office, pdf_path, date_str)
                         if result == 202:
                             agent_success.append(agent_name)
+                            agent_status.success(f"✅ Sent to {agent_name}")
                         else:
-                            agent_status.warning(f"❌ Failed to email {agent_name} ({result})")
+                            agent_status.warning(f"❌ Failed for {agent_name}: {result}")
 
-                        agent_progress.progress(i / len(agent_list))
-                        agent_status.text(f"{i}/{len(agent_list)} agent emails processed...")
+                        agent_progress.progress(i / len(flagged_agents))
+                        agent_status.text(f"{i}/{len(flagged_agents)} flagged agent emails processed...")
+
+                    st.success(f"✅ Agent emails sent: {len(agent_success)}")
+
+
 
                 # === 2. Send office emails ===
                 if send_offices:
-                    office_paths = {
-                        office: path
-                        for office, path in st.session_state["pdf_paths"].items()
-                        if office not in ("full", "offices_zip")
-                    }
-
                     st.markdown("### 🏢 Sending office reports to managers...")
                     office_progress = st.progress(0)
                     office_status = st.empty()
 
+                    # Get only the flagged office PDFs from session_state
+                    office_paths = {
+                        office.replace("_pdf", ""): path
+                        for office, path in st.session_state["pdf_paths"]["flagged"].items()
+                        if office.endswith("_pdf") and not office.startswith(tuple(flagged_df["Agent"].unique()))
+                    }
+
+                    office_success = []
                     for i, (office, path) in enumerate(office_paths.items(), 1):
+                        if not path or not os.path.exists(path):
+                            office_status.warning(f"⚠️ Missing PDF for {office}")
+                            continue
+
                         result = send_office_email(office, path, date_str)
                         if result == 202:
                             office_success.append(office)
+                            office_status.success(f"✅ Sent office report for {office}")
                         else:
                             office_status.warning(f"❌ Failed to send office report for {office} ({result})")
 
                         office_progress.progress(i / len(office_paths))
-                        office_status.text(f"{i}/{len(office_paths)} offices processed...")
+                        office_status.text(f"{i}/{len(office_paths)} office reports processed...")
+
+                    st.success(f"✅ Office manager emails sent: {len(office_success)}")
+
 
                 # === 3. Send full company report ===
                 if send_company:

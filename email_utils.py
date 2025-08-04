@@ -23,12 +23,9 @@ OFFICE_MANAGER_EMAILS = {
 }
 
 CEO_AND_DIRECTORS = [
-    "", # Here we need Erick's email
-    "carlos@marketingleads.com.mx",
-    "erick@marketingleads.com.mx"
+    "ceciliocervantes@gmail.com"
 ]
-
-DEV_TEAM = ["dipepere@truedata.com.mx", "cecilio@marketingleads.com.mx"]
+DEV_TEAM = ["diego.dph.30@gmail.com", "cecilio@marketingleads.com.mx"]
 
 CHANGED_OFFICE_AGENTS = {
     "abilly": "wbilly@marketingstormleads.com",
@@ -38,7 +35,7 @@ CHANGED_OFFICE_AGENTS = {
 }
 
 # This is the email setup for email sending in SendGrid
-SENDER_EMAIL = "" 
+SENDER_EMAIL = "dipepere@truedata.com.mx" 
 SENDER_NAME = "MSL Analytics Dashboard"
 
 AGENT_DOMAIN = "marketingstormleads.com"
@@ -87,6 +84,9 @@ def send_email(subject, html_content, to_list, cc_list=None, file_path=None):
         return f"Error: {e}"
 
 def send_agent_email(agent_name, office, pdf_path, date_str):
+    print(f"Sending email for agent: {agent_name}, office: {office}, date: {date_str}")
+    if agent_name != "n aldana":
+        return "Invalid agent name"
     if not os.path.exists(pdf_path):
         return "File not found"
 
@@ -94,8 +94,11 @@ def send_agent_email(agent_name, office, pdf_path, date_str):
         agent_name = CHANGED_OFFICE_AGENTS[agent_name]
     else:
         agent_email = f"{agent_name}@{AGENT_DOMAIN}"
+    
+    agent_email = "ceciliocervantes@gmail.com"
 
     manager_email = OFFICE_MANAGER_EMAILS.get(office)
+    manager_email = "ncecilio@marketingstormleads.com"
     if not manager_email:
         raise ValueError(f"No manager email found for office: {office}")
 
