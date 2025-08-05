@@ -4,3 +4,6 @@ gcp_credentials.json
 gcp_credentials.json
 exported_pdfs/
 flagged_reports/
+.DS_Store
+__pycache__/
+*.py[cod]
