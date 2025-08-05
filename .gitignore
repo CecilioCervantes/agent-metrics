@@ -1,5 +1,5 @@
 gcp_credentials.json
 .env
-.env
 .streamlit/secrets.toml
 gcp_credentials.json
+exported_pdfs/
