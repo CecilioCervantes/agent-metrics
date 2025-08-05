@@ -3,3 +3,4 @@ gcp_credentials.json
 .streamlit/secrets.toml
 gcp_credentials.json
 exported_pdfs/
+flagged_reports/
