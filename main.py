@@ -924,10 +924,6 @@ with tab2:
         else:
             st.info("📤 Preparing reports and sending emails...")
 
-
-
-
-
             # Compute flagged agents and generate PDFs on-the-fly
             raw_data = st.session_state.get("raw_data", None)
             if raw_data is None:
@@ -943,8 +939,6 @@ with tab2:
 
             generate_flagged_reports(flagged_df, report_date)
 
-            
-
             agent_success, office_success, global_success = [], [], None
 
             try:
@@ -958,13 +952,13 @@ with tab2:
                     for i, agent_info in enumerate(agent_list, 1):
                         agent_name = agent_info["Agent"]
                         office = agent_info["Office"]
-                        pdf_paths = st.session_state["agent_to_pdfs"].get(agent_name, [])
+                        pdf_path = st.session_state["pdf_paths"]["flagged"].get(f"{agent_name}_pdf")
 
-                        if not pdf_paths or any(not os.path.exists(pdf_path) for pdf_path in pdf_paths):
+                        if pdf_path is None or not os.path.exists(pdf_path):
                             agent_status.warning(f"⚠️ Missing PDF for {agent_name} (pdf_path)")
                             continue
 
-                        result = send_agent_email(agent_name, office, pdf_paths, date_str)
+                        result = send_agent_email(agent_name, office, [pdf_path], date_str)
                         if result == 202:
                             agent_success.append(agent_name)
                             agent_status.success(f"✅ Sent to {agent_name}")
@@ -973,8 +967,6 @@ with tab2:
 
                         agent_progress.progress(i / len(agent_list))
                         agent_status.text(f"{i}/{len(agent_list)} flagged agent emails processed...")
-
-                    st.success(f"✅ Agent emails sent: {len(agent_success)}")
 
                 # === 2. Send office emails ===
                 if send_offices:
@@ -1004,8 +996,6 @@ with tab2:
 
                         office_progress.progress(i / len(office_paths))
                         office_status.text(f"{i}/{len(office_paths)} office reports processed...")
-
-                    st.success(f"✅ Office manager emails sent: {len(office_success)}")
 
 
                 # === 3. Send full company report ===
