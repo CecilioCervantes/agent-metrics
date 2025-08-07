@@ -13,13 +13,14 @@ load_dotenv()
 
 # === CONFIGURABLE MAPPINGS ===
 OFFICE_MANAGER_EMAILS = {
-    "army": "erick@marketingleads.com.mx",
+    "Army": "erick@marketingleads.com.mx",
     "Tepic": "felipe@marketingleads.com.mx",
-    "west": "wesley@marketingleads.com.mx",
-    "egypt": "marwan@marketingleads.com.mx",
+    "West": "wesley@marketingleads.com.mx",
+    "Egypt": "marwan@marketingleads.com.mx",
     "Spanish": "javier@marketingleads.com.mx",
-    "pakistan": "erick@marketingleads.com.mx",
-    "Sp & Prime": "manny@marketingleads.com.mx"
+    "Pakistan": "erick@marketingleads.com.mx",
+    "Sp & Prime": "manny@marketingleads.com.mx",
+    "Commercial": "manny@marketgingleads.com.mx"
 }
 
 CEO_AND_DIRECTORS = [
@@ -117,7 +118,9 @@ def send_agent_email(agent_name, office, file_paths, date_str):
     return send_email(subject, html_body, to_list, cc_list, file_paths)
 
 def send_office_email(office, file_paths, date_str):
-    manager_email = OFFICE_MANAGER_EMAILS.get(office)
+    #manager_email = OFFICE_MANAGER_EMAILS.get(office)
+    test_email = "ceciliocervantes@gmail.com"
+    manager_email = test_email
     if not manager_email:
         raise ValueError(f"No manager email found for office: {office}")
 
