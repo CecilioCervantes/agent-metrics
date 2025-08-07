@@ -1498,8 +1498,6 @@ def get_flagged_agents(df, report_date):
     Returns agent name, flagged=True, with clear human-readable reasons.
     """
 
-    from datetime import datetime
-    from data_processor import insert_total_rows, decimal_to_hhmmss_nosign
 
     # Insert total rows
     rep_date = pd.to_datetime(df["Report Date"].iloc[0])
@@ -1582,7 +1580,7 @@ def get_flagged_agents(df, report_date):
 
 
 def generate_flagged_reports(flagged_df, report_date):
-    import os
+
     OUTPUT_DIR = "flagged_reports"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     date_str = report_date.strftime("%B %d, %Y")
@@ -1603,7 +1601,15 @@ def generate_flagged_reports(flagged_df, report_date):
         </body>
         </html>"""
 
+
+
+    total = len(flagged_df)
+    progress = st.progress(0)
+    status = st.empty()
+    count = 0
+
     for _, row in flagged_df.iterrows():
+
         agent_name = row["Agent"]
         office = row["Office"]
         reasons = row["Reasons"].split("\n") if row["Reasons"] else []
@@ -1650,6 +1656,10 @@ def generate_flagged_reports(flagged_df, report_date):
         pdf_path = os.path.join(OUTPUT_DIR, f"{agent_name}_Flagged_{date_str}.pdf")
         html_to_pdf(html_content, pdf_path)
         results[f"{agent_name}_pdf"] = pdf_path
+
+        count += 1
+        progress.progress(int(count / total * 100))
+        status.text(f"Generating charts: {count}/{total}")
 
     # --- Per-office PDFs ---
     for office, office_df in flagged_df.groupby("Office"):
