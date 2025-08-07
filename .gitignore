@@ -1,5 +1,9 @@
 gcp_credentials.json
 .env
-.env
 .streamlit/secrets.toml
 gcp_credentials.json
+exported_pdfs/
+flagged_reports/
+.DS_Store
+__pycache__/
+*.py[cod]

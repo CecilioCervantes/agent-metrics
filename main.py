@@ -100,9 +100,17 @@ from data_processor import (
     insert_total_rows,
     connect_to_gsheet,
     create_unique_worksheet,
-    export_df_to_sheet
+    export_df_to_sheet,
+    get_flagged_agents,
+    generate_flagged_reports
 )
 
+# === EMAIL UTILITIES ===
+from email_utils import (
+    send_agent_email,
+    send_office_email,
+    send_full_company_email,
+)
 
 # === STREAMLIT PAGE CONFIG ===
 # Sets the browser tab title, layout width, and sidebar visibility
@@ -145,6 +153,7 @@ for key, default in {
     "raw_data": None,
     "uploaded_files": None,
     "pdf_paths": {},  # ← store generated PDFs here
+    "agent_to_pdfs": {},
     "pdf_ready": False,  # NEW: control when to auto-generate
     "pdf_ready_next_cycle": False  # NEW: one-cycle delay buffer
 }.items():
@@ -174,7 +183,10 @@ DROPBOX_FOLDER = os.getenv("DROPBOX_FOLDER", "/ReadyModeReports")
 # --- Supabase Access ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    supabase = None
 
 
 
@@ -297,6 +309,7 @@ if files:
         st.session_state["pdf_ready_next_cycle"] = True
         st.session_state.dropbox_file_names = [name for name, _ in files]
         st.session_state["pdf_paths"] = {}  # Clear old PDFs
+        st.session_state["agent_to_pdfs"] = {}
         
 
 
@@ -385,10 +398,12 @@ with st.sidebar:
             
             )
             st.session_state["pdf_paths"] = {}  # Clear old PDFs
+            st.session_state["agent_to_pdfs"] = {}
 
 
             st.success("✅ Data processed successfully!")
             st.session_state["pdf_paths"] = {}
+            st.session_state["agent_to_pdfs"] = {}
             st.session_state["pdf_ready_next_cycle"] = True
 
 
@@ -695,6 +710,19 @@ with tab1:
         df = pd.DataFrame()
 
     if not df.empty:
+        # === Flag agents with bad metrics (console log) ===
+
+        flagged_df = get_flagged_agents(df.copy(), datetime.now())
+
+        if flagged_df.empty:
+            print("✅ No agents flagged. Everyone is on track!")
+        else:
+            print("\n🚨 Flagged Agents:")
+            for _, row in flagged_df.iterrows():
+                print(f"- {row['Agent']}: {row['Reasons']}")
+                
+
+
         # Group data by Office name
         offices = df["Office"].dropna().unique()
 
@@ -743,8 +771,95 @@ with tab1:
     else:
         st.warning("⚠️ No data loaded or available for display.")
 
+def generate_all_reports(df, report_date):
+    OUTPUT_DIR = "exported_pdfs"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    date_str = report_date.strftime("%B %d, %Y")
 
+    # Reset PDF cache
+    st.session_state["pdf_paths"] = {}
+    st.session_state["agent_to_pdfs"] = {}
 
+    with tempfile.TemporaryDirectory() as tmpdir:
+        st.session_state["export_mode"] = True
+
+        # Deduplicate for summary stats
+        df_sorted = df.sort_values(by=["Agent", "1st Call"])
+        unique_agents = df_sorted.drop_duplicates(subset="Agent", keep="first")
+
+        grouped_by_office = {}
+        for office, office_df in df.groupby("Office"):
+            office_agents = office_df["Agent"].unique()
+            office_summary_df = unique_agents[unique_agents["Agent"].isin(office_agents)]
+            office_df_sorted = office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
+            office_df_sorted = insert_total_rows(office_df_sorted, report_date)
+            office_df_sorted.attrs["unique_summary_rows"] = office_summary_df
+            grouped_by_office[office] = office_df_sorted
+
+        # Initialize progress bar
+        total = sum(len(df) for df in grouped_by_office.values())
+        progress = st.progress(0)
+        status = st.empty()
+        count = 0
+
+        # Chart generation + individual agent PDFs
+        for office, office_df in grouped_by_office.items():
+            for _, row in office_df.iterrows():
+                count += 1
+                progress.progress(int(count / total * 100))
+                status.text(f"Generating charts: {count}/{total}")
+                fig = build_export_figure(row, color_override="#666666" if row.get("is_total") else None)
+                chart_filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+                chart_path = os.path.join(tmpdir, chart_filename)
+                pio.write_image(fig, chart_path, format="png", scale=0.5)
+
+                # Per-agent PDF
+                pdf_filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.pdf"
+                pdf_path = os.path.join(OUTPUT_DIR, pdf_filename)
+                agent_df = office_df.loc[[row.name]]
+                export_html_pdf({office: agent_df}, pdf_path, chart_folder=tmpdir)
+                if row['Agent'] in st.session_state["agent_to_pdfs"]:
+                    st.session_state["agent_to_pdfs"][row['Agent']].append(pdf_path)
+                else:
+                    st.session_state["agent_to_pdfs"][row['Agent']] = [pdf_path]
+
+        # Full company PDF
+        full_pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
+        export_html_pdf(grouped_by_office, full_pdf_path, chart_folder=tmpdir)
+        final_full_path = os.path.join(OUTPUT_DIR, f"Agent_Report_{date_str}.pdf")
+        shutil.copyfile(full_pdf_path, final_full_path)
+        st.session_state["pdf_paths"]["full"] = final_full_path
+
+        # Per-office PDFs
+        for office, office_df in grouped_by_office.items():
+            if office_df.empty:
+                continue
+
+            office_tmpdir = os.path.join(tmpdir, "per_office", office)
+            os.makedirs(office_tmpdir, exist_ok=True)
+
+            for _, row in office_df.iterrows():
+                filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+                src = os.path.join(tmpdir, filename)
+                dst = os.path.join(office_tmpdir, filename)
+                shutil.copyfile(src, dst)
+
+            office_pdf_path = os.path.join(office_tmpdir, f"{office}_Report_{date_str}.pdf")
+            export_html_pdf({office: office_df}, office_pdf_path, chart_folder=office_tmpdir)
+            final_office_path = os.path.join(OUTPUT_DIR, f"{office}_Report_{date_str}.pdf")
+            shutil.copyfile(office_pdf_path, final_office_path)
+            st.session_state["pdf_paths"][office] = final_office_path
+
+        # ZIP of all offices
+        zip_path = os.path.join(OUTPUT_DIR, f"Office_Reports_{date_str}.zip")
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for office, path in st.session_state["pdf_paths"].items():
+                if office == "full":
+                    continue
+                zipf.write(path, arcname=os.path.basename(path))
+        st.session_state["pdf_paths"]["offices_zip"] = zip_path
+
+        st.session_state["export_mode"] = False
 
 ###########################
 # TAB 2: Agent Progress Dashboard
@@ -755,113 +870,23 @@ with tab2:
     # === BUTTON: Download PDF ===
     if st.button("📥 Download Summary PDF"):
         st.info("📦 Generating PDFs... please wait ⏳")
-
-
-        OUTPUT_DIR = "exported_pdfs"
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-
         df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
         report_date = pd.to_datetime(df["Report Date"].iloc[0])
-        date_str = report_date.strftime("%B %d, %Y")
-
-        # Reset PDF cache in session
-        st.session_state["pdf_paths"] = {}
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            st.session_state["export_mode"] = True
-
-            # STEP 1: Deduplicate globally by earliest 1st Call for summary stats
-            df_sorted = df.sort_values(by=["Agent", "1st Call"])
-            unique_agents = df_sorted.drop_duplicates(subset="Agent", keep="first")
-
-            # STEP 2: Attach unique summary DF to each office's DataFrame for PDF logic
-            grouped_by_office = {}
-            for office, office_df in df.groupby("Office"):
-                office_agents = office_df["Agent"].unique()
-                office_summary_df = unique_agents[unique_agents["Agent"].isin(office_agents)]
-                office_df_sorted = office_df.sort_values(["Agent", "Time Connected"], ascending=[True, False])
-                office_df_sorted = insert_total_rows(office_df_sorted, report_date)
-                grouped_by_office[office] = office_df_sorted 
-                
-                # Hack: Store unique rows for PDF stats using special key
-                office_df_sorted.attrs["unique_summary_rows"] = office_summary_df
-                grouped_by_office[office] = office_df_sorted
+        generate_all_reports(df, report_date)
 
 
-            # Initialize progress bar
-            total = sum(len(df) for df in grouped_by_office.values())
-            progress = st.progress(0)
-            status = st.empty()
-            count = 0
-
-            # ─── Generate all charts for the FULL report with progress ───
-            for office_df in grouped_by_office.values():
-                for _, row in office_df.iterrows():
-                    count += 1
-                    progress.progress(int(count / total * 100))
-                    status.text(f"Generating charts: {count}/{total}")
-
-                    color = "#666666" if row.get("is_total") is True else None
-                    fig = build_export_figure(row, color_override=color)
-                    img_path = os.path.join(
-                        tmpdir,
-                        f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
+    if st.session_state.get("pdf_paths", {}).get("flagged"):
+        st.markdown("### 📥 Download Flagged Reports")
+        for name, path in st.session_state["pdf_paths"]["flagged"].items():
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    st.download_button(
+                        label=f"📄 {os.path.basename(path)}",
+                        data=f.read(),
+                        file_name=os.path.basename(path),
+                        mime="application/pdf",
+                        use_container_width=True
                     )
-                    pio.write_image(fig, img_path, format="png", scale=0.5)
-
-
-
-            # === Export full report ===
-            full_pdf_path = os.path.join(tmpdir, f"Agent_Report_{date_str}.pdf")
-            export_html_pdf(grouped_by_office, full_pdf_path, chart_folder=tmpdir)
-            final_full_path = os.path.join(OUTPUT_DIR, f"Agent_Report_{date_str}.pdf")
-            shutil.copyfile(full_pdf_path, final_full_path)
-            st.session_state["pdf_paths"]["full"] = final_full_path
-
-
-            # === Export each office separately ===
-            for office, office_df in grouped_by_office.items():
-                if office_df.empty:
-                    continue
-
-                 # create a folder of copies for this office
-                office_tmpdir = os.path.join(tmpdir, "per_office", office)
-                os.makedirs(office_tmpdir, exist_ok=True)
-                
-                for _, row in office_df.iterrows():
-                    # filename matches the one you already rendered above
-                    filename = f"{row['Agent'].replace(' ', '_')}_{row.name}.png"
-                    src = os.path.join(tmpdir, filename)
-                    dst = os.path.join(office_tmpdir, filename)
-                    shutil.copyfile(src, dst)
-
-                office_pdf_path = os.path.join(
-                    office_tmpdir, f"{office}_Report_{date_str}.pdf"
-                )
-                export_html_pdf(
-                    {office: office_df},
-                    office_pdf_path,
-                    chart_folder=office_tmpdir
-                )
-
-                final_office_path = os.path.join(
-                    OUTPUT_DIR, f"{office}_Report_{date_str}.pdf"
-                )
-                shutil.copyfile(office_pdf_path, final_office_path)
-                st.session_state["pdf_paths"][office] = final_office_path
-
-
-
-
-            # ✅ === Bundle all office PDFs into a single ZIP ===
-            zip_path = os.path.join(OUTPUT_DIR, f"Office_Reports_{date_str}.zip")
-            with zipfile.ZipFile(zip_path, "w") as zipf:
-                for office, path in st.session_state["pdf_paths"].items():
-                    if office == "full":
-                        continue
-                    zipf.write(path, arcname=os.path.basename(path))
-            st.session_state["pdf_paths"]["offices_zip"] = zip_path  
-            st.session_state["export_mode"] = False
 
     # === Download Buttons ===
     if st.session_state.get("pdf_paths", {}).get("full"):
@@ -885,55 +910,121 @@ with tab2:
                 use_container_width=True
             )
 
+    # === Checkboxes to select email types ===
+    send_agents = st.checkbox("📩 Notify flagged agents about their metrics", value=True)
+    send_offices = st.checkbox("🏢 Notify managers with a summary of underperforming agents", value=True)
+    send_company = st.checkbox("🏛️ Provide directors with a complete performance report", value=False)
+
+    # === Email button ===
+    if st.button("📧 Send Selected Summary Reports by Email"):
 
 
+        if not any([send_agents, send_offices, send_company]):
+            st.warning("Please select at least one report type to send.")
+        else:
+            st.info("📤 Preparing reports and sending emails...")
+
+            # Compute flagged agents and generate PDFs on-the-fly
+            raw_data = st.session_state.get("raw_data", None)
+            if raw_data is None:
+                st.warning("⚠️ No data loaded yet. Please upload a CSV or load from Dropbox.")
+                st.stop()
+            df = pd.concat(raw_data.values(), ignore_index=True) if isinstance(raw_data, dict) else raw_data.copy()
+            report_date = datetime.now()
+            flagged_df = get_flagged_agents(df.copy(), report_date)
+            if flagged_df.empty:
+                st.warning("✅ No flagged agents to email.")
+                st.stop()
+            date_str = report_date.strftime("%B %d, %Y")
+
+            generate_flagged_reports(flagged_df, report_date)
+
+            agent_success, office_success, global_success = [], [], None
+
+            try:
+                # === 1. Send agent emails ===
+                if send_agents:
+                    agent_list = flagged_df[["Agent", "Office"]].drop_duplicates().to_dict(orient="records")
+                    st.markdown("### 📩 Sending agent emails...")
+                    agent_progress = st.progress(0)
+                    agent_status = st.empty()
+
+                    for i, agent_info in enumerate(agent_list, 1):
+                        agent_name = agent_info["Agent"]
+                        office = agent_info["Office"]
+                        pdf_path = st.session_state["pdf_paths"]["flagged"].get(f"{agent_name}_pdf")
+
+                        if pdf_path is None or not os.path.exists(pdf_path):
+                            agent_status.warning(f"⚠️ Missing PDF for {agent_name} (pdf_path)")
+                            continue
+
+                        result = send_agent_email(agent_name, office, [pdf_path], date_str)
+                        if result == 202:
+                            agent_success.append(agent_name)
+                            agent_status.success(f"✅ Sent to {agent_name}")
+                        else:
+                            agent_status.warning(f"❌ Failed for {agent_name}: {result}")
+
+                        agent_progress.progress(i / len(agent_list))
+                        agent_status.text(f"{i}/{len(agent_list)} flagged agent emails processed...")
+
+                # === 2. Send office emails ===
+                if send_offices:
+                    st.markdown("### 🏢 Sending office reports to managers...")
+                    office_progress = st.progress(0)
+                    office_status = st.empty()
+
+                    # Get only the flagged office PDFs from session_state
+                    office_paths = {
+                        office.replace("_pdf", ""): path
+                        for office, path in st.session_state["pdf_paths"]["flagged"].items()
+                        if office.endswith("_pdf") and not office.startswith(tuple(flagged_df["Agent"].unique()))
+                    }
+
+                    office_success = []
+                    for i, (office, path) in enumerate(office_paths.items(), 1):
+                        if not path or not os.path.exists(path):
+                            office_status.warning(f"⚠️ Missing PDF for {office}")
+                            continue
+
+                        result = send_office_email(office, [path], date_str)
+                        if result == 202:
+                            office_success.append(office)
+                            office_status.success(f"✅ Sent office report for {office}")
+                        else:
+                            office_status.warning(f"❌ Failed to send office report for {office} ({result})")
+
+                        office_progress.progress(i / len(office_paths))
+                        office_status.text(f"{i}/{len(office_paths)} office reports processed...")
 
 
-    # === BUTTON: PDF Export + Email ===
-    # if st.button("📧 Send Summary PDF to My Email"):
-    #     st.info("📦 Building report... please wait ⏳")
+                # === 3. Send full company report ===
+                if send_company:
+                    st.markdown("### 🏛️ Sending full company report...")
+                    full_path = st.session_state["pdf_paths"].get("full")
+                    if full_path and os.path.exists(full_path):
+                        result = send_full_company_email([full_path], date_str)
+                        if result == 202:
+                            global_success = True
+                            st.success("✅ Company-wide report sent successfully")
+                        else:
+                            global_success = False
+                            st.warning(f"❌ Failed to send full report ({result})")
+                    else:
+                        st.warning("⚠️ Full report PDF not found.")
 
-    #     # Rebuild the full dataset
-    #     df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
-    #     report_date = pd.to_datet#ime(df["Report Date"].iloc[0])
-    #     date_str = report_date.strftime("%B %d, %Y")
-    #     target_email = "cecilio@marketingleads.com.mx"
+            except Exception as e:
+                st.error(f"🚨 An error occurred while sending emails: {e}")
 
-    #     with tempfile.TemporaryDirectory() as tmpdir:
-    #         st.session_state["export_mode"] = True  # Suppress UI render
-
-    #         # Build PNG charts in advance (avoids bugs in some backends)
-    #         for _, row in df.iterrows():
-    #             fig = build_export_figure(row)
-    #             img_path = os.path.join(tmpdir, f"{row['Agent'].replace(' ', '_')}.png")
-    #             pio.write_image(fig, img_path, format='png', scale=2)
-
-    #         # Sort agents inside each office and group by Office name
-    #         grouped_by_office = {
-    #             office: office_df.sort_values("Agent")
-    #             for office, office_df in df.groupby("Office")
-    #         }
-
-    #         # Create final PDF path
-    #         pdf_path = os.path.join(tmpdir, f"summary_{date_str}.pdf")
-
-    #         # Export the HTML + PDF
-    #         export_html_pdf(grouped_by_office, pdf_path, PDFKIT_CONFIG, chart_folder=tmpdir)
-
-    #         # Email it
-    #         success, msg = send_email(
-    #             to_email=target_email,
-    #             subject=f"Agent Summary Report – {date_str}",
-    #             body="Attached is the full summary.",
-    #             attachment_path=pdf_path
-    #         )
-
-    #         st.session_state["export_mode"] = False  # Restore render mode
-
-    #         if success:
-    #             st.success(f"✅ Sent to {target_email}")
-    #         else:
-    #             st.error(f"❌ {msg}")
+            # === Final summary ===
+            if send_agents:
+                st.success(f"✅ Agent emails sent: {len(agent_success)}")
+            if send_offices:
+                st.success(f"✅ Office manager emails sent: {len(office_success)}")
+            if send_company and global_success:
+                st.success("✅ Full company report emailed")
+            elif send_company and not global_success:
+                st.warning("⚠️ Full company report could not be sent")
 
 
 #### ------------------------------------------------------------------------------------------------------------------------------------------
