@@ -711,7 +711,7 @@ with tab1:
 
     if not df.empty:
         # === Flag agents with bad metrics (console log) ===
-        from datetime import datetime
+
         flagged_df = get_flagged_agents(df.copy(), datetime.now())
 
         if flagged_df.empty:
@@ -874,15 +874,6 @@ with tab2:
         report_date = pd.to_datetime(df["Report Date"].iloc[0])
         generate_all_reports(df, report_date)
 
-    if st.button("📤 Export Flagged Agents to PDF"):
-        if flagged_df.empty:
-            st.warning("✅ No flagged agents to export.")
-        else:
-            st.info("📦 Generating PDF with flagged agents only...")
-
-            report_date = pd.to_datetime(flagged_df["Report Date"].iloc[0])
-            generate_flagged_reports(flagged_df, report_date)
-            st.success("✅ PDF with flagged agents generated!")
 
     if st.session_state.get("pdf_paths", {}).get("flagged"):
         st.markdown("### 📥 Download Flagged Reports")
@@ -922,30 +913,37 @@ with tab2:
     # === Checkboxes to select email types ===
     send_agents = st.checkbox("📩 Notify flagged agents about their metrics", value=True)
     send_offices = st.checkbox("🏢 Notify managers with a summary of underperforming agents", value=True)
-    send_company = st.checkbox("🏛️ Provide directors with a complete performance report", value=True)
+    send_company = st.checkbox("🏛️ Provide directors with a complete performance report", value=False)
 
     # === Email button ===
     if st.button("📧 Send Selected Summary Reports by Email"):
+
+
         if not any([send_agents, send_offices, send_company]):
             st.warning("Please select at least one report type to send.")
         else:
             st.info("📤 Preparing reports and sending emails...")
 
-            # === Prepare base data
-            df = pd.concat(st.session_state.raw_data.values(), ignore_index=True) if isinstance(st.session_state.raw_data, dict) else st.session_state.raw_data.copy()
-            report_date = pd.to_datetime(df["Report Date"].iloc[0])
+
+
+
+
+            # Compute flagged agents and generate PDFs on-the-fly
+            raw_data = st.session_state.get("raw_data", None)
+            if raw_data is None:
+                st.warning("⚠️ No data loaded yet. Please upload a CSV or load from Dropbox.")
+                st.stop()
+            df = pd.concat(raw_data.values(), ignore_index=True) if isinstance(raw_data, dict) else raw_data.copy()
+            report_date = datetime.now()
+            flagged_df = get_flagged_agents(df.copy(), report_date)
+            if flagged_df.empty:
+                st.warning("✅ No flagged agents to email.")
+                st.stop()
             date_str = report_date.strftime("%B %d, %Y")
-            # Limit to 3 agents for debugging
-            df = df.iloc[:3]
 
-            # Always regenerate PDFs for safety (ensures all agents included)
-            with st.spinner("🛠️ Generating flagged reports (charts + PDFs)..."):
-                flagged_df = get_flagged_agents(df.copy(), report_date)
-                if flagged_df.empty:
-                    st.warning("✅ No flagged agents to email.")
-                    st.stop()
-                generate_flagged_reports(flagged_df, report_date)
+            generate_flagged_reports(flagged_df, report_date)
 
+            
 
             agent_success, office_success, global_success = [], [], None
 
@@ -956,23 +954,6 @@ with tab2:
                     st.markdown("### 📩 Sending agent emails...")
                     agent_progress = st.progress(0)
                     agent_status = st.empty()
-
-                    '''
-                    # Use only flagged agents
-                    flagged_agents = flagged_df[["Agent", "Office"]].drop_duplicates()
-                    agent_success = []
-
-                    for i, (_, row) in enumerate(flagged_agents.iterrows(), 1):
-                        agent_name = row["Agent"]
-                        office = row["Office"]
-
-                        # Get the PDF path from session_state (set by generate_flagged_reports)
-                        pdf_key = f"{agent_name}_pdf"
-                        pdf_path = st.session_state["pdf_paths"]["flagged"].get(pdf_key)
-
-                        if not pdf_path or not os.path.exists(pdf_path):
-                            agent_status.warning(f"⚠️ Missing PDF for {agent_name}")
-                    '''
 
                     for i, agent_info in enumerate(agent_list, 1):
                         agent_name = agent_info["Agent"]
