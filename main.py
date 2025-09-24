@@ -1028,7 +1028,7 @@ if (
 
 
 with tab3:
-    st.markdown("### 📈 **Daily Sales Trend — Total Call Center Sales**")
+
 
     try:
         # Load from Google Sheet
@@ -1037,48 +1037,87 @@ with tab3:
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
 
-        # Validate expected columns
+        # Validate expected columns (unchanged structure)
         if "Date" not in df.columns or "Total sales" not in df.columns:
             st.error("❌ Sheet must include columns: 'Date', 'Total sales'")
             st.stop()
 
-        # Clean and sort
+        # Clean and sort (keep your year-append behavior)
         df["Date"] = pd.to_datetime(df["Date"] + " 2025", errors="coerce")
         df["Total sales"] = pd.to_numeric(df["Total sales"], errors="coerce").fillna(0)
-        df = df.sort_values("Date")
+        df = df.dropna(subset=["Date"]).sort_values("Date")
 
-        # Add color logic
-        df["Previous"] = df["Total sales"].shift(1)
-        df["Delta"] = df["Total sales"] - df["Previous"]
-        df["Color"] = df["Delta"].apply(lambda x: "green" if x > 0 else "red")
+        # Map weekday goals
+        # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+        weekday = df["Date"].dt.weekday
+        goals = {
+            0: 400, 1: 400, 2: 400, 3: 400,  # Mon–Thu
+            4: 300,                           # Fri
+            5: 250,                           # Sat
+            6: 150                            # Sun (your current setting)
+        }
+        df["Goal"] = weekday.map(goals)
 
-        # Create bar chart
+        # Deviation from goal
+        df["DeltaFromGoal"] = df["Total sales"] - df["Goal"]
+
+        # Colors: above goal = green, below = red, exactly on goal = gray
+        def color_fn(v):
+            if v > 0:
+                return "green"
+            elif v < 0:
+                return "red"
+            return "gray"
+
+        df["Color"] = df["DeltaFromGoal"].apply(color_fn)
+
+        # Build the deviation bar chart (one trace per day to match your style)
         fig = go.Figure()
         for _, row in df.iterrows():
+            x_label = row["Date"].strftime("%b %d")
+            hover = (
+                f"<b>{row['Date'].strftime('%Y-%m-%d')}</b><br>"
+                f"Leads: {int(row['Total sales'])}<br>"
+                f"Goal: {int(row['Goal'])}<br>"
+                f"Δ vs Goal: {int(row['DeltaFromGoal'])}"
+            )
+
+            # Weekday + actual vs goal on two lines
+            label_text = f"{row['Date'].strftime('%A')}<br>{int(row['Total sales'])} vs {int(row['Goal'])}"
+
+
             fig.add_trace(go.Bar(
-                x=[row["Date"].strftime("%b %d")],
-                y=[row["Total sales"]],
+                x=[x_label],
+                y=[row["DeltaFromGoal"]],
                 marker_color=row["Color"],
                 name=row["Date"].strftime("%Y-%m-%d"),
-                hovertext=f"{row['Total sales']} sales",
-                hoverinfo="text"
+                hovertext=hover,
+                hoverinfo="text",
+                text=[label_text],
+                textposition="outside",
+                textfont=dict(size=10),
+                cliponaxis=False  # allow labels outside plot area
             ))
 
+        # Add horizontal baseline at 0 (the goal line)
+        fig.add_hline(y=0, line_dash="dash", line_width=2, opacity=0.7)
+
         fig.update_layout(
-            title="📞 Total Daily Sales",
+            title="🎯 Performance vs Plan — Daily Call Center Sales vs Goal",
             xaxis_title="Date",
-            yaxis_title="Sales",
+            yaxis_title="Δ vs Goal (Leads)",
             xaxis=dict(tickangle=-45),
+            yaxis=dict(range=[-200, 200]),
             height=450,
             showlegend=False,
-            plot_bgcolor="white"
+            plot_bgcolor="white",
+            margin=dict(t=70, b=110)  # extra room for labels below negative bars
         )
 
         st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Error loading sales data: {e}")
-
+        st.error(f"❌ Error loading leads data: {e}")
 
 
 
