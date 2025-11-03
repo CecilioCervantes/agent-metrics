@@ -495,18 +495,18 @@ def get_daily_time_goals(report_date):
     if weekday in [0, 1, 2, 3]:
         wrap_limit = 1.75 if is_commercial else 1.0
         goal_time = 10 if is_prime else 9.5
-        return goal_time, 2 + 20/60, wrap_limit, 4.5, "07:45"
+        return goal_time, 2 + 20/60, wrap_limit, 4.5, "08:00"
 
     # Friday
     elif weekday == 4:
         wrap_limit = 1.5 if is_commercial else 0.75
         goal_time = 8 if is_prime else 7.5
-        return goal_time, 2.0, wrap_limit, 3.5, "07:45"
+        return goal_time, 2.0, wrap_limit, 3.5, "08:00"
 
     # Saturday
     elif weekday == 5:
         wrap_limit = 0.75
-        return 6, 1, wrap_limit, 2.75, "08:15"
+        return 6, 1, wrap_limit, 2.75, "08:00"
 
     # Sunday
     elif weekday == 6:
