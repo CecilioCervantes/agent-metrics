@@ -780,7 +780,7 @@ def classify_office(agent_name):
         if agent_name.startswith("sp ") or agent_name.startswith("pr "): return "Sp & Prime"
         if agent_name.startswith("e "): return "Egypt"
         if agent_name.startswith("s "): return "Spanish"
-        if agent_name.startswith("g "): return "Pakistan"
+        if agent_name.startswith("g "): return "Tigers"
     return "Other"
 
 
