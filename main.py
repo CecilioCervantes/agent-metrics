@@ -1036,17 +1036,47 @@ with tab3:
         worksheet = sheet.worksheet("Leads History")
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-
+    
         # Validate expected columns (unchanged structure)
         if "Date" not in df.columns or "Total sales" not in df.columns:
             st.error("❌ Sheet must include columns: 'Date', 'Total sales'")
             st.stop()
-
-        # Clean and sort (keep your year-append behavior)
-        df["Date"] = pd.to_datetime(df["Date"] + " 2025", errors="coerce")
+    
+        # --- Clean / parse dates (handles year rollover Dec -> Jan) ---
+        df["Date_raw"] = df["Date"].astype(str).str.strip()
         df["Total sales"] = pd.to_numeric(df["Total sales"], errors="coerce").fillna(0)
-        df = df.dropna(subset=["Date"]).sort_values("Date")
-
+    
+        # IMPORTANT: keep sheet order so rollover detection works
+        df["_row_order"] = range(len(df))
+    
+        # Parse with a base year (your sheet strings have no year)
+        base_year = 2025
+        df["Date"] = pd.to_datetime(
+            df["Date_raw"] + f" {base_year}",
+            format="%A %B %d %Y",
+            errors="coerce"
+        )
+    
+        # Drop bad dates but keep original order for rollover logic
+        df = df.dropna(subset=["Date"]).sort_values("_row_order").reset_index(drop=True)
+    
+        # Detect rollover: when date jumps backwards a lot (Dec -> Jan)
+        rollover = df["Date"].diff().dt.days < -300  # threshold safely catches year boundary
+        df["_year_add"] = rollover.cumsum().astype(int)
+    
+        # Apply +N years using DateOffset (safe for leap years)
+        if df["_year_add"].any():
+            df["Date"] = df.apply(
+                lambda r: r["Date"] + pd.DateOffset(years=int(r["_year_add"])),
+                axis=1
+            )
+    
+        # Final sort by real datetime
+        df = df.sort_values("Date").reset_index(drop=True)
+    
+        # Cleanup temp columns
+        df = df.drop(columns=["Date_raw", "_row_order", "_year_add"], errors="ignore")
+    
         # Map weekday goals
         # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
         weekday = df["Date"].dt.weekday
@@ -1054,13 +1084,13 @@ with tab3:
             0: 400, 1: 400, 2: 400, 3: 400,  # Mon–Thu
             4: 300,                           # Fri
             5: 250,                           # Sat
-            6: 150                            # Sun (your current setting)
+            6: 150                            # Sun
         }
         df["Goal"] = weekday.map(goals)
-
+    
         # Deviation from goal
         df["DeltaFromGoal"] = df["Total sales"] - df["Goal"]
-
+    
         # Colors: above goal = green, below = red, exactly on goal = gray
         def color_fn(v):
             if v > 0:
@@ -1068,26 +1098,24 @@ with tab3:
             elif v < 0:
                 return "red"
             return "gray"
-
+    
         df["Color"] = df["DeltaFromGoal"].apply(color_fn)
-
+    
         # Build the deviation bar chart (one trace per day to match your style)
         fig = go.Figure()
         for _, row in df.iterrows():
-            x_label = row["Date"].strftime("%b %d")
             hover = (
                 f"<b>{row['Date'].strftime('%Y-%m-%d')}</b><br>"
                 f"Leads: {int(row['Total sales'])}<br>"
                 f"Goal: {int(row['Goal'])}<br>"
                 f"Δ vs Goal: {int(row['DeltaFromGoal'])}"
             )
-
+    
             # Weekday + actual vs goal on two lines
             label_text = f"{row['Date'].strftime('%A')}<br>{int(row['Total sales'])} vs {int(row['Goal'])}"
-
-
+    
             fig.add_trace(go.Bar(
-                x=[x_label],
+                x=[row["Date"]],  # use real datetime (prevents year issues / label collisions)
                 y=[row["DeltaFromGoal"]],
                 marker_color=row["Color"],
                 name=row["Date"].strftime("%Y-%m-%d"),
@@ -1096,28 +1124,33 @@ with tab3:
                 text=[label_text],
                 textposition="outside",
                 textfont=dict(size=10),
-                cliponaxis=False  # allow labels outside plot area
+                cliponaxis=False
             ))
-
+    
         # Add horizontal baseline at 0 (the goal line)
         fig.add_hline(y=0, line_dash="dash", line_width=2, opacity=0.7)
-
+    
         fig.update_layout(
             title="🎯 Performance vs Plan — Daily Call Center Sales vs Goal",
             xaxis_title="Date",
             yaxis_title="Δ vs Goal (Leads)",
             xaxis=dict(tickangle=-45),
+            # Keep your fixed range, but you can switch to autorange if you ever need it:
+            # yaxis=dict(autorange=True),
             yaxis=dict(range=[-200, 200]),
             height=450,
             showlegend=False,
             plot_bgcolor="white",
-            margin=dict(t=70, b=110)  # extra room for labels below negative bars
+            margin=dict(t=70, b=110)
         )
-
+    
+        # Make dates readable while still using real datetimes
+        fig.update_xaxes(tickformat="%b %d", tickangle=-45)
+    
         st.plotly_chart(fig, use_container_width=True)
-
+    
     except Exception as e:
-        st.error(f"❌ Error loading leads data: {e}")
+    st.error(f"❌ Error loading leads data: {e}")
 
 
 
