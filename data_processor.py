@@ -768,7 +768,7 @@ def detect_inconsistencies(df):
 
 def classify_office(agent_name):
     commercial_agents = {
-        "sp tony", "sp allan", "sp chris", "sp mathew", "sp steve", "w retano", "sp jennifer1", "sp tom"
+        "sp tony", "sp allan", "sp chris", "sp mathew", "sp steve", "w retano", "sp jennifer1", "sp tom1"
     }
 
     if isinstance(agent_name, str):
