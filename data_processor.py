@@ -854,8 +854,7 @@ def load_and_process_data(uploaded_dfs, report_date):
             # 2) Convert all time columns into decimal hours
             for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
                 if col in df.columns:
-                    df[col] = df[col].apply(time_string_to_decimal)
-
+                    df[col] = df[col].apply(time_string_to_decimal).fillna(0.0)
             # 3) Compute Time To Goal (TTG) for Chase rows            
             def calculate_ttgs_chase(row):
                 agent = row.get("Agent")  # ensures agent is visible
@@ -901,7 +900,7 @@ def load_and_process_data(uploaded_dfs, report_date):
         # Convert time-related columns to decimal format
         for col in ["Time Connected", "Break", "Talk Time", "Wrap Up"]:
             if col in df.columns:
-                df[col] = df[col].apply(time_string_to_decimal)
+                df[col] = df[col].apply(time_string_to_decimal).fillna(0.0)
 
         # Flag time mismatches between shift and reported time
         df = detect_inconsistencies(df)
