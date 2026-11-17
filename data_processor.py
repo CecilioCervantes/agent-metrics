@@ -491,10 +491,10 @@ def get_daily_time_goals(report_date):
     # 🔵 Prime agent flag (prefix "pr ")
     is_prime = isinstance(agent_name, str) and agent_name.startswith("pr ")
 
-    # Mon–Thu
     if weekday in [0, 1, 2, 3]:
         wrap_limit = 1.75 if is_commercial else 1.0
-        goal_time = 10 if is_prime else 9.5
+        # goal_time = 10 if is_prime else 9.5
+        goal_time = 10.25  # Thanksgiving: 10 hours 15 minutes
         return goal_time, 2 + 20/60, wrap_limit, 4.5, "08:15"
 
         
